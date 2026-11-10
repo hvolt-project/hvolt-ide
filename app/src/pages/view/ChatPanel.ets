@@ -47,6 +47,8 @@ export struct ChatPanel {
   /** Attachments for the next message, as data URLs. */
   @State private attachments: string[] = [];
   private asr: AsrSession = new AsrSession();
+  /** Pending long-press on the field; -1 means the hold already became dictation. */
+  private holdTimer: number = -1;
   /** Draft text before dictation, so interim results do not stack up. */
   private asrBase: string = '';
   /** The reader's own open/closed choices; they outlive a mode switch. */
@@ -95,10 +97,12 @@ export struct ChatPanel {
   }
 
   private startDictation(): void {
-    if (this.busy || this.asrActive) {
+    // Dictation starts a fresh message: over existing text it would have to decide whether to
+    // append, replace or merge, and any of those is worse than asking for an empty field.
+    if (this.busy || this.asrActive || this.draft.trim().length > 0) {
       return;
     }
-    this.asrBase = this.draft.length > 0 ? this.draft + ' ' : '';
+    this.asrBase = '';
     this.asrActive = true;
     this.asr.start((text: string, final: boolean) => {
       this.draft = this.asrBase + text;
@@ -288,65 +292,13 @@ export struct ChatPanel {
     }
   }
 
-  build() {
-    Column() {
-      Row({ space: 10 }) {
-        Text(this.project.length > 0 ? this.project : '未打开工程')
-          .fontSize(17)
-          .fontWeight(FontWeight.Bold)
-          .fontColor(this.p().textPrimary)
-          .maxLines(1)
-        Text(this.endpointLabel())
-          .fontSize(11)
-          .fontColor(this.p().textTertiary)
-          .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .layoutWeight(1)
-        Blank()
-        if (this.busy) {
-          Text('停止')
-            .fontSize(13)
-            .fontColor('#E5484D')
-            .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-            .onClick(() => {
-              this.actions.stop();
-            })
-        }
-
-      }
-      .width('100%')
-      .height(48)
-      .padding({ left: 14, right: 8 })
-
-      if (this.lines.length === 0) {
-        Column({ space: 8 }) {
-          Text(this.project.length > 0 ? this.project : '助手')
-            .fontSize(26)
-            .fontWeight(FontWeight.Bold)
-            .fontColor(this.p().textPrimary)
-          Text('问点什么，或输入 / 看命令、@ 引用文件')
-            .fontSize(13)
-            .fontColor(this.p().textTertiary)
-        }
-        .layoutWeight(1)
-        .width('100%')
-        .justifyContent(FlexAlign.Center)
-        .alignItems(HorizontalAlign.Center)
-      }
-
-      List({ space: 10 }) {
-        ForEach(buildBlocks(this.lines, this.mode, this.toggled), (block: ChatBlock) => {
-          ListItem() {
-            this.Block(block)
-          }
-        }, (block: ChatBlock) => block.key + ':' + block.open + ':' + block.text.length + ':' + block.items.length)
-
-      }
-      .layoutWeight(this.lines.length === 0 ? 0 : 1)
-      .height(this.lines.length === 0 ? 0 : undefined)
-      .width('100%')
-      .padding({ left: 12, right: 12 })
-
+  // The field carries attach and dictation on its left edge; sending is the only action that
+  // sits outside it. Held-down dictation lives on the field itself, so there is no extra button.
+  // Attach and dictation live on the field's left edge; sending is the only action outside it.
+  // Dictation is a long press on the field itself rather than another button.
+  @Builder
+  Composer() {
+    Column({ space: 6 }) {
       if (this.suggest.length > 0) {
         List({ space: 0 }) {
           ForEach(this.suggest, (item: string) => {
@@ -376,7 +328,6 @@ export struct ChatPanel {
         .constraintSize({ maxHeight: 208 })
         .backgroundColor(this.p().card)
         .borderRadius(12)
-        .margin({ left: 12, right: 12, bottom: 6 })
       }
 
       if (this.attachments.length > 0) {
@@ -388,7 +339,7 @@ export struct ChatPanel {
                 .height(52)
                 .borderRadius(8)
                 .objectFit(ImageFit.Cover)
-              Text('×')
+              Text('\u00d7')
                 .fontSize(12)
                 .fontColor('#FFFFFF')
                 .width(18)
@@ -405,7 +356,6 @@ export struct ChatPanel {
           }, (image: string, index: number) => index + ':' + image.length)
         }
         .width('100%')
-        .padding({ left: 12, right: 12, bottom: 6 })
       }
 
       Row({ space: 8 }) {
@@ -422,38 +372,50 @@ export struct ChatPanel {
             this.pickImages();
           })
 
-          Stack() {
-            SymbolGlyph($r('sys.symbol.mic_fill'))
-              .fontSize(16)
-              .fontColor([this.asrActive ? '#E5484D' : this.p().textSecondary])
-          }
-          .width(34)
-          .height(34)
-          .borderRadius(8)
-          .backgroundColor(this.asrActive ? '#E5484D22' : Color.Transparent)
-          .onTouch((event: TouchEvent) => {
-            if (event.type === TouchType.Down) {
-              this.startDictation();
-            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-              this.stopDictation();
+          if (this.asrActive) {
+            Row({ space: 6 }) {
+              SymbolGlyph($r('sys.symbol.wave_1'))
+                .fontSize(16)
+                .fontColor([this.p().textSecondary])
+              Text('正在聆听…')
+                .fontSize(14)
+                .fontColor(this.p().textSecondary)
             }
-          })
-
+            .layoutWeight(1)
+            .height(36)
+            .justifyContent(FlexAlign.Center)
+          } else {
           TextArea({ text: this.draft, placeholder: '说点什么，/ 命令，@ 引用文件' })
-          .layoutWeight(1)
-          .constraintSize({ minHeight: 36, maxHeight: 132 })
-          .backgroundColor(Color.Transparent)
-          .padding({ left: 4, right: 4, top: 8, bottom: 8 })
-          .fontSize(14)
-          .fontColor(this.p().textPrimary)
-          .placeholderColor(this.p().textTertiary)
-          .onChange((v: string) => {
-            this.draft = v;
-            this.refreshSuggest(v);
-          })
+            .layoutWeight(1)
+            .constraintSize({ minHeight: 36, maxHeight: 132 })
+            .backgroundColor(Color.Transparent)
+            .padding({ left: 4, right: 4, top: 8, bottom: 8 })
+            .fontSize(14)
+            .fontColor(this.asrActive ? '#E5484D' : this.p().textPrimary)
+            .placeholderColor(this.p().textTertiary)
+            .onChange((v: string) => {
+              this.draft = v;
+              this.refreshSuggest(v);
+            })
+            .onTouch((event: TouchEvent) => {
+              if (event.type === TouchType.Down) {
+                this.holdTimer = setTimeout(() => {
+                  this.holdTimer = -1;
+                  this.startDictation();
+                }, 600);
+              } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                if (this.holdTimer >= 0) {
+                  clearTimeout(this.holdTimer);
+                  this.holdTimer = -1;
+                } else {
+                  this.stopDictation();
+                }
+              }
+            })
+          }
         }
         .layoutWeight(1)
-        .backgroundColor(this.p().card)
+        .backgroundColor(this.asrActive ? '#E5484D14' : this.p().card)
         .borderRadius(12)
         .padding({ left: 2, right: 6, top: 3, bottom: 3 })
 
@@ -471,7 +433,78 @@ export struct ChatPanel {
         })
       }
       .width('100%')
-      .padding({ left: 12, right: 12, top: 8, bottom: 12 })
+    }
+    .width('100%')
+  }
+
+  build() {
+    Column() {
+      if (this.lines.length === 0) {
+        // Nothing said yet: the title and the field are one centred block, the way a blank page
+        // opens. Once a message lands the field drops to the bottom and stays there.
+        Column({ space: 18 }) {
+          Column({ space: 8 }) {
+            Text(this.project.length > 0 ? this.project : '助手')
+              .fontSize(26)
+              .fontWeight(FontWeight.Bold)
+              .fontColor(this.p().textPrimary)
+            Text('问点什么，或输入 / 看命令、@ 引用文件')
+              .fontSize(13)
+              .fontColor(this.p().textTertiary)
+          }
+          .alignItems(HorizontalAlign.Center)
+
+          this.Composer()
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .padding({ left: 12, right: 12 })
+      } else {
+        Row({ space: 10 }) {
+          Text(this.project.length > 0 ? this.project : '未打开工程')
+            .fontSize(17)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.p().textPrimary)
+            .maxLines(1)
+          Text(this.endpointLabel())
+            .fontSize(11)
+            .fontColor(this.p().textTertiary)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+            .layoutWeight(1)
+          Blank()
+          if (this.busy) {
+            Text('停止')
+              .fontSize(13)
+              .fontColor('#E5484D')
+              .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+              .onClick(() => {
+                this.actions.stop();
+              })
+          }
+        }
+        .width('100%')
+        .height(48)
+        .padding({ left: 14, right: 8 })
+
+        List({ space: 10 }) {
+          ForEach(buildBlocks(this.lines, this.mode, this.toggled), (block: ChatBlock) => {
+            ListItem() {
+              this.Block(block)
+            }
+          }, (block: ChatBlock) => block.key + ':' + block.open + ':' + block.text.length + ':' + block.items.length)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .padding({ left: 12, right: 12 })
+
+        Column() {
+          this.Composer()
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, top: 8, bottom: 12 })
+      }
     }
     .width('100%')
     .height('100%')
