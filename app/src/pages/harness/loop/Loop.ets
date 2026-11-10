@@ -11,6 +11,7 @@ import { ChatMessage, Role, ToolCall, assistantMessage, toolMessage, userMessage
 
 export interface LoopSink {
   onText: (delta: string) => void;
+  onThought: (delta: string) => void;
   onToolStart: (call: ToolCall) => void;
   onToolResult: (callId: string, text: string) => void;
   onError: (message: string) => void;
@@ -76,6 +77,7 @@ export class ChatSession {
           break;
         }
         const text: string[] = [];
+        const thought: string[] = [];
         const calls: ToolCall[] = [];
         let failure = '';
 
@@ -83,6 +85,10 @@ export class ChatSession {
           onText: (delta: string) => {
             text.push(delta);
             sink.onText(delta);
+          },
+          onThought: (delta: string) => {
+            thought.push(delta);
+            sink.onThought(delta);
           },
           onToolCall: (call: ToolCall) => {
             calls.push(call);
@@ -95,7 +101,7 @@ export class ChatSession {
         }, this.abort);
 
         const assembled = text.join('');
-        this.history.push(assistantMessage(assembled, calls));
+        this.history.push(assistantMessage(assembled, calls, thought.join('')));
         if (failure.length > 0) {
           sink.onError(failure);
           break;
@@ -119,51 +125,56 @@ export class ChatSession {
     }
   }
 
-  /** Serialises the conversation without the system prompt, which is rebuilt on load. */
+  /**
+   * One message per line (jsonl), system prompt excluded — it is rebuilt on load.
+   *
+   * A line per message rather than one JSON array: the file stays readable with grep, a partial
+   * write costs one line instead of the whole conversation, and a future append-only writer does
+   * not have to rewrite what is already there.
+   */
   dump(): string {
-    const rows: Object[] = [];
+    const lines: string[] = [];
     for (const message of this.history) {
       if (message.role === 'system') {
         continue;
       }
       const calls: Object[] = [];
       for (const call of message.toolCalls) {
-        calls.push({
-          'id': call.id, 'name': call.name, 'arguments': call.argumentsJson
-        });
+        calls.push({ 'id': call.id, 'name': call.name, 'arguments': call.argumentsJson });
       }
-      rows.push({
+      lines.push(JSON.stringify({
         'role': message.role,
         'content': message.content,
+        'reasoning': message.reasoning,
         'calls': calls,
         'callId': message.toolCallId
-      });
+      }));
     }
-    return JSON.stringify(rows);
+    return lines.join('\n');
   }
 
-  /** Restores a dumped conversation; a corrupt dump is dropped rather than half-loaded. */
+  /** Restores a jsonl dump; a malformed line is skipped rather than aborting the rest. */
   load(text: string): void {
-    const kept: ChatMessage[] = this.history.filter((m: ChatMessage) => m.role === 'system');
-    this.history = kept;
+    this.history = this.history.filter((m: ChatMessage) => m.role === 'system');
     if (text.trim().length === 0) {
       return;
     }
-    let parsed: Object[];
-    try {
-      parsed = JSON.parse(text) as Object[];
-    } catch (e) {
-      return;
-    }
-    if (parsed === undefined || parsed === null) {
-      return;
-    }
-    for (const raw of parsed) {
-      const row = raw as Record<string, Object>;
-      const role = row['role'] as string;
+    for (const line of text.split('\n')) {
+      if (line.trim().length === 0) {
+        continue;
+      }
+      let row: Record<string, Object> | null = null;
+      try {
+        row = JSON.parse(line) as Record<string, Object>;
+      } catch (e) {
+        continue;
+      }
+      if (row === null || row['role'] === undefined) {
+        continue;
+      }
       const calls: ToolCall[] = [];
       const rawCalls = row['calls'] as Object[];
-      if (rawCalls !== undefined) {
+      if (rawCalls !== undefined && rawCalls !== null) {
         for (const entry of rawCalls) {
           const call = entry as Record<string, Object>;
           calls.push({
@@ -174,8 +185,9 @@ export class ChatSession {
         }
       }
       this.history.push({
-        role: role as Role,
+        role: row['role'] as Role,
         content: row['content'] as string,
+        reasoning: row['reasoning'] === undefined ? '' : row['reasoning'] as string,
         toolCalls: calls,
         toolCallId: row['callId'] === undefined ? '' : row['callId'] as string
       });

@@ -29,7 +29,8 @@ export async function loadPromptFile(): Promise<string> {
   }
 }
 
-function runtimeBlock(ctx: RuntimeContext): string {
+/** The volatile part, kept out of the system prompt so the cached prefix stays byte-identical. */
+export function runtimeBlock(ctx: RuntimeContext): string {
   const lines: string[] = [];
   lines.push('## 当前状态');
   lines.push('- 工程：' + (ctx.projectName.length === 0 ? '（未打开）' : ctx.projectName));
@@ -38,15 +39,21 @@ function runtimeBlock(ctx: RuntimeContext): string {
   return lines.join('\n');
 }
 
-/** Static prompt + runtime block + whatever the user added in settings. */
-export async function buildSystemPrompt(ctx: RuntimeContext): Promise<string> {
+/**
+ * Static prompt plus the user's standing additions — nothing that changes per turn.
+ *
+ * Provider-side context caching matches on the request prefix, and the prefix is the system
+ * message followed by the history. Anything volatile in here (which file is open, which device
+ * is connected) would invalidate the cache on every turn, so that part travels with the user
+ * message instead.
+ */
+export async function buildSystemPrompt(): Promise<string> {
   const base = await loadPromptFile();
   const extra = await readPref(KEY_EXTRA, '');
   const parts: string[] = [];
   if (base.length > 0) {
     parts.push(base);
   }
-  parts.push(runtimeBlock(ctx));
   if (extra.length > 0) {
     parts.push('## 用户附加要求\n' + extra);
   }

@@ -6,6 +6,8 @@ export type Role = 'system' | 'user' | 'assistant' | 'tool';
 export interface ChatMessage {
   role: Role;
   content: string;
+  /** Reasoning text, when the model emits one; kept so later turns can send it back. */
+  reasoning: string;
   /** Set on assistant messages that ask for tools. */
   toolCalls: ToolCall[];
   /** Set on tool results: which call they answer. */

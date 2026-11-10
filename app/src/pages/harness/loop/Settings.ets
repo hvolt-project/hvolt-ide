@@ -7,11 +7,14 @@ import { readPref, writePref } from '../../model/Prefs';
 const KEY_BASE: string = 'llm.base';
 const KEY_MODEL: string = 'llm.model';
 const KEY_TOKEN: string = 'llm.key';
+const KEY_EFFORT: string = 'llm.effort';
 
 export class LlmConfig {
   baseUrl: string = '';
   model: string = '';
   token: string = '';
+  /** '' means the provider's default; low / medium / high are sent only when chosen. */
+  effort: string = '';
 
   ready(): boolean {
     return this.baseUrl.length > 0 && this.model.length > 0 && this.token.length > 0;
@@ -23,6 +26,7 @@ export async function loadLlmConfig(): Promise<LlmConfig> {
   config.baseUrl = await readPref(KEY_BASE, '');
   config.model = await readPref(KEY_MODEL, '');
   config.token = await readPref(KEY_TOKEN, '');
+  config.effort = await readPref(KEY_EFFORT, '');
   return config;
 }
 
@@ -30,4 +34,5 @@ export function saveLlmConfig(config: LlmConfig): void {
   writePref(KEY_BASE, config.baseUrl.trim());
   writePref(KEY_MODEL, config.model.trim());
   writePref(KEY_TOKEN, config.token.trim());
+  writePref(KEY_EFFORT, config.effort.trim());
 }

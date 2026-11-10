@@ -198,22 +198,31 @@ struct Index {
     if (kind === 'text') {
       const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
       if (last !== undefined && last.kind === 'assistant') {
-        lines[lines.length - 1] = { kind: 'assistant', text: last.text + text };
+        lines[lines.length - 1] = { kind: 'assistant', text: last.text + text, open: true };
         this.chatLines = lines;
         return;
       }
-      lines.push({ kind: 'assistant', text: text });
+      lines.push({ kind: 'assistant', text: text, open: true });
       this.chatLines = lines;
       return;
     }
-    if (kind === 'tool') {
-      lines.push({ kind: 'tool', text: text });
-    } else if (kind === 'result') {
-      lines.push({ kind: 'tool', text: text });
+    if (kind === 'thought') {
+      const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
+      if (last !== undefined && last.kind === 'thought') {
+        lines[lines.length - 1] = { kind: 'thought', text: last.text + text, open: last.open };
+        this.chatLines = lines;
+        return;
+      }
+      lines.push({ kind: 'thought', text: text, open: true });
+      this.chatLines = lines;
+      return;
+    }
+    if (kind === 'tool' || kind === 'result') {
+      lines.push({ kind: 'tool', text: text, open: true });
     } else if (kind === 'error') {
-      lines.push({ kind: 'error', text: text });
+      lines.push({ kind: 'error', text: text, open: true });
     } else if (kind === 'user') {
-      lines.push({ kind: 'user', text: text });
+      lines.push({ kind: 'user', text: text, open: true });
     }
     this.chatLines = lines;
   }
@@ -222,7 +231,7 @@ struct Index {
     this.appendChat('user', text);
     this.chatBusy = true;
     this.session.chatSend(text, (kind: string, body: string) => {
-      this.appendChat(kind, kind === 'tool' ? '调用 ' + body : body);
+      this.appendChat(kind, body);
       if (kind === 'done') {
         this.chatBusy = false;
       }

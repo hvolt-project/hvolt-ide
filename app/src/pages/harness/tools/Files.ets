@@ -8,6 +8,8 @@ import { globMatcher, relativeTo, safePath, walkFiles } from '../fs/Walk';
 export interface FileContext {
   /** Absolute sandbox path of the open project; '' when none is open. */
   projectDir: () => string;
+  /** Runs one turn against the in-IDE conversation, using whatever the settings configure. */
+  chatSend?: (text: string) => Promise<string>;
 }
 
 const MAX_READ_BYTES: number = 200 * 1024;

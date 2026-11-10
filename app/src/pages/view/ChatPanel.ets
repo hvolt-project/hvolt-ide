@@ -3,12 +3,15 @@
 // the history.
 
 import { palette, Palette } from '../model/Palette';
+import { MarkdownView } from './MarkdownView';
 
-export type ChatKind = 'user' | 'assistant' | 'tool' | 'error';
+export type ChatKind = 'user' | 'assistant' | 'tool' | 'error' | 'thought';
 
 export interface ChatLine {
   kind: ChatKind;
   text: string;
+  /** Reasoning is folded by default; a tap opens it. Ignored by other kinds. */
+  open: boolean;
 }
 
 export interface ChatActions {
@@ -39,6 +42,14 @@ export struct ChatPanel {
     return palette(this.dark);
   }
 
+  private toggle(line: ChatLine): void {
+    const next: ChatLine[] = [];
+    for (const entry of this.lines) {
+      next.push(entry === line ? { kind: entry.kind, text: entry.text, open: !entry.open } : entry);
+    }
+    this.lines = next;
+  }
+
   private tone(kind: ChatKind): string {
     if (kind === 'user') {
       return this.p().brand;
@@ -52,25 +63,68 @@ export struct ChatPanel {
     return this.p().textPrimary;
   }
 
+  // Sent text is a bubble on the right; replies are a document, not a bubble. A tool call is a
+  // single quiet line: it is a fact about the turn, not something addressed to the reader.
   @Builder
-  Bubble(line: ChatLine) {
-    Column({ space: 4 }) {
-      Text(line.kind === 'tool' ? '工具' : (line.kind === 'user' ? '你' : '助手'))
-        .fontSize(10)
+  Line(line: ChatLine) {
+    if (line.kind === 'user') {
+      Row() {
+        Blank()
+        Text(line.text)
+          .fontSize(14)
+          .lineHeight(20)
+          .fontColor(this.p().textPrimary)
+          .padding({ left: 12, right: 12, top: 9, bottom: 9 })
+          .backgroundColor(this.p().brandSoft)
+          .borderRadius(14)
+          .constraintSize({ maxWidth: '80%' })
+          .textAlign(TextAlign.Start)
+      }
+      .width('100%')
+    } else if (line.kind === 'thought') {
+      Column({ space: 6 }) {
+        Row({ space: 6 }) {
+          Text(line.open ? '思考' : '思考 · ' + line.text.length + ' 字')
+            .fontSize(12)
+            .fontColor(this.p().textTertiary)
+          Blank()
+          Text(line.open ? '收起' : '展开')
+            .fontSize(12)
+            .fontColor(this.p().textTertiary)
+        }
+        .width('100%')
+        .onClick(() => {
+          this.toggle(line);
+        })
+
+        if (line.open) {
+          Text(line.text.length === 0 ? '…' : line.text)
+            .fontSize(12)
+            .lineHeight(18)
+            .fontColor(this.p().textSecondary)
+            .width('100%')
+            .padding({ left: 8 })
+            .border({ width: { left: 2 }, color: this.p().divider })
+        }
+      }
+      .width('100%')
+    } else if (line.kind === 'tool') {
+      Text(line.text)
+        .fontSize(12)
         .fontColor(this.p().textTertiary)
         .width('100%')
-      Text(line.text.length === 0 ? '…' : line.text)
+        .maxLines(2)
+        .textOverflow({ overflow: TextOverflow.Ellipsis })
+    } else if (line.kind === 'error') {
+      Text(line.text)
         .fontSize(13)
         .lineHeight(19)
-        .fontColor(this.tone(line.kind))
+        .fontColor('#E5484D')
         .width('100%')
-        .textAlign(TextAlign.Start)
+    } else {
+      MarkdownView({ dark: this.dark, text: line.text })
+        .width('100%')
     }
-    .alignItems(HorizontalAlign.Start)
-    .width('100%')
-    .padding(12)
-    .backgroundColor(line.kind === 'tool' ? this.p().bg : this.p().card)
-    .borderRadius(12)
   }
 
   build() {
@@ -112,7 +166,7 @@ export struct ChatPanel {
       List({ space: 8 }) {
         ForEach(this.lines, (line: ChatLine, index: number) => {
           ListItem() {
-            this.Bubble(line)
+            this.Line(line)
           }
         }, (line: ChatLine, index: number) => index + ':' + line.kind)
       }

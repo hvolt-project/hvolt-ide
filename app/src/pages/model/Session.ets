@@ -18,10 +18,11 @@ import {
   writeSource
 } from './Project';
 import fs from '@ohos.file.fs';
+import zlib from '@ohos.zlib';
 import { startHarness } from '../harness/Harness';
 import { ChatSession } from '../harness/loop/Loop';
 import { LlmConfig, loadLlmConfig } from '../harness/loop/Settings';
-import { buildSystemPrompt } from '../harness/Prompt';
+import { buildSystemPrompt, runtimeBlock } from '../harness/Prompt';
 import { ProjectWatcher, WatchEvent } from '../harness/fs/Watch';
 import hilog from '@ohos.hilog';
 import { readPref, writePref } from './Prefs';
@@ -133,42 +134,66 @@ export class Session {
   chat: ChatSession = new ChatSession();
 
   private chatFile(name: string): string {
-    return this.filesDir() + '/projects/' + name + '/.hvolt/chat.json';
+    return this.filesDir() + '/projects/' + name + '/.hvolt/chat.jsonl.gz';
   }
 
   private filesDir(): string {
     return getContext().filesDir;
   }
 
-  /** Restores the project's conversation; a missing or unreadable file just means none. */
-  private loadChat(name: string): void {
-    const path = this.chatFile(name);
+  /**
+   * Restores the project's conversation. The file is gzipped jsonl: a dump costs a fraction of
+   * the raw text, and gzip is the compressor the platform already ships.
+   */
+  private async loadChat(name: string): Promise<void> {
+    const gz = this.chatFile(name);
     try {
-      if (fs.accessSync(path)) {
-        this.chat.load(fs.readTextSync(path));
+      if (!fs.accessSync(gz)) {
+        return;
       }
     } catch (e) {
+      return;
+    }
+    const raw = gz + '.raw';
+    try {
+      await zlib.decompressFile(gz, raw);
+      this.chat.load(fs.readTextSync(raw));
+    } catch (e) {
+      this.append('chat history load failed: ' + (e as Error).message);
+    } finally {
+      try {
+        fs.unlinkSync(raw);
+      } catch (e) {
+      }
     }
   }
 
-  private saveChat(): void {
+  private async saveChat(): Promise<void> {
     if (this.project.length === 0) {
       return;
     }
-    const path = this.chatFile(this.project);
+    const gz = this.chatFile(this.project);
+    const raw = gz + '.raw';
     try {
-      const dir = path.substring(0, path.lastIndexOf('/'));
+      const dir = gz.substring(0, gz.lastIndexOf('/'));
       if (!fs.accessSync(dir)) {
         fs.mkdirSync(dir, true);
       }
-      const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      const file = fs.openSync(raw, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
       try {
         fs.writeSync(file.fd, this.chat.dump());
       } finally {
         fs.closeSync(file);
       }
+      await zlib.compressFile(raw, gz);
+      hilog.info(0x0000, 'hvoltide', 'chat saved: %{public}d bytes gz', fs.statSync(gz).size);
     } catch (e) {
       this.append('chat history save failed: ' + (e as Error).message);
+    } finally {
+      try {
+        fs.unlinkSync(raw);
+      } catch (e) {
+      }
     }
   }
 
@@ -180,16 +205,22 @@ export class Session {
       onEvent('error', '先在设置里填模型地址、模型名与密钥');
       return;
     }
-    const prompt = await buildSystemPrompt({
+    const prompt = await buildSystemPrompt();
+    this.chat.setSystem(prompt);
+    // State travels with the message, not in the system prompt: that keeps the cacheable
+    // prefix identical from turn to turn.
+    const state = runtimeBlock({
       projectName: this.project,
       currentFile: this.current,
       deviceAddress: this.device,
       connected: this.link === 2
     });
-    this.chat.setSystem(prompt);
-    await this.chat.send(config, userText, {
+    await this.chat.send(config, state + '\n\n' + userText, {
       onText: (delta: string) => {
         onEvent('text', delta);
+      },
+      onThought: (delta: string) => {
+        onEvent('thought', delta);
       },
       onToolStart: (call) => {
         onEvent('tool', call.name + ' ' + call.argumentsJson);
@@ -204,7 +235,7 @@ export class Session {
         onEvent('done', '');
       }
     });
-    this.saveChat();
+    await this.saveChat();
   }
 
   chatStop(): void {
@@ -327,6 +358,16 @@ export class Session {
     startHarness({
       projectDir: () => {
         return this.projectPath();
+      },
+      // The endpoint talks to the same session the page shows: one conversation, one history.
+      chatSend: async (text: string): Promise<string> => {
+        let reply = '';
+        await this.chatSend(text, (kind: string, body: string) => {
+          if (kind === 'text') {
+            reply += body;
+          }
+        });
+        return reply;
       }
     });
   }
@@ -559,7 +600,8 @@ export class Session {
     this.watcher.start(this.dir(), (events: WatchEvent[]) => {
       this.onTreeChanged(events);
     });
-    this.loadChat(name);
+    this.loadChat(name).catch(() => {
+    });
     readPref('tabs.' + name, '[]').then((raw: string) => {
       if (this.project !== name) {
         return;

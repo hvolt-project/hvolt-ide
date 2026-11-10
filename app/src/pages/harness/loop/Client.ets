@@ -8,9 +8,12 @@ import util from '@ohos.util';
 import { TOOLS } from '../mcp/Registry';
 import { ChatMessage, ToolCall } from './Types';
 import { LlmConfig } from './Settings';
+import { chatUrl } from './Models';
 
 export interface StreamSink {
   onText: (delta: string) => void;
+  /** Reasoning deltas, when the model emits them (reasoning_content or reasoning). */
+  onThought?: (delta: string) => void;
   onToolCall: (call: ToolCall) => void;
   onDone: () => void;
   onError: (message: string) => void;
@@ -80,6 +83,10 @@ function applyDelta(payload: string, text: string[], calls: Map<number, ToolCall
   if (delta === undefined) {
     return text.join('');
   }
+  const thought = delta['reasoning_content'] !== undefined ? delta['reasoning_content'] : delta['reasoning'];
+  if (thought !== undefined && thought !== null && sink.onThought !== undefined) {
+    sink.onThought(thought as string);
+  }
   const content = delta['content'];
   if (content !== undefined && content !== null) {
     const piece = content as string;
@@ -125,6 +132,10 @@ export async function streamChat(config: LlmConfig, messages: ChatMessage[], sin
     'tools': toolSchema(),
     'stream': true
   };
+  // Only sent when chosen: an endpoint that does not know the field should not choke on it.
+  if (config.effort.length > 0) {
+    body['reasoning_effort'] = config.effort;
+  }
   const request = http.createHttp();
   const decoder = util.TextDecoder.create('utf-8');
   const text: string[] = [];
@@ -155,7 +166,7 @@ export async function streamChat(config: LlmConfig, messages: ChatMessage[], sin
   });
 
   try {
-    await request.requestInStream(config.baseUrl, {
+    await request.requestInStream(chatUrl(config.baseUrl), {
       method: http.RequestMethod.POST,
       header: {
         'Content-Type': 'application/json',

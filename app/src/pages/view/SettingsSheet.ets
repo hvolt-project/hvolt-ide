@@ -8,6 +8,7 @@ import fs from '@ohos.file.fs';
 import { HvoltResult } from '../model/Hvolt';
 import { LlmConfig, loadLlmConfig, saveLlmConfig } from '../harness/loop/Settings';
 import { loadExtraInstructions, saveExtraInstructions } from '../harness/Prompt';
+import { listModels, ModelList } from '../harness/loop/Models';
 import {
   FONT_SIZES, KEY_AUTOCONNECT, KEY_AUTOSAVE, KEY_FONT, KEY_LINES, KEY_OBFUSCATE, KEY_TAB,
   KEY_SAVE_ON_SWITCH, KEY_TAIL, KEY_WRAP, TAILS, TAB_SIZES, readObfuscation, setObfuscation
@@ -71,7 +72,11 @@ export struct SettingsSheet {
   @State private llmBase: string = '';
   @State private llmModel: string = '';
   @State private llmToken: string = '';
+  @State private llmEffort: string = '';
   @State private extraPrompt: string = '';
+  @State private modelOptions: SelectOption[] = [];
+  @State private modelIndex: number = 0;
+  @State private modelState: string = '';
   @State private autoDeploy: string = '0';
   @State private fontPx: number = 14;
   @State private lineNumbers: string = '1';
@@ -216,7 +221,57 @@ export struct SettingsSheet {
     config.baseUrl = this.llmBase;
     config.model = this.llmModel;
     config.token = this.llmToken;
+    config.effort = this.llmEffort;
     saveLlmConfig(config);
+  }
+
+  private reason(problem: string): string {
+    if (problem.indexOf('401') >= 0 || problem.indexOf('403') >= 0) {
+      return '密钥不对';
+    }
+    if (problem.indexOf('404') >= 0) {
+      return '没有这个地址';
+    }
+    if (problem.indexOf('timeout') >= 0 || problem.indexOf('timed out') >= 0) {
+      return '连接超时';
+    }
+    if (problem.indexOf('Failed to connect') >= 0 || problem.indexOf('refused') >= 0) {
+      return '连不上';
+    }
+    return problem;
+  }
+
+  private fetchModels(): void {
+    if (this.llmBase.trim().length === 0) {
+      this.modelState = '';
+      return;
+    }
+    const config = new LlmConfig();
+    config.baseUrl = this.llmBase;
+    config.token = this.llmToken;
+    this.modelState = '连接中…';
+    listModels(config).then((result: ModelList) => {
+      if (!result.ok) {
+        this.modelState = this.reason(result.problem);
+        return;
+      }
+      const options: SelectOption[] = [];
+      for (const id of result.models) {
+        options.push({ value: id });
+      }
+      this.modelOptions = options;
+      this.modelState = result.models.length + ' 个';
+      if (this.llmModel.length === 0) {
+        this.llmModel = result.models[0];
+        this.modelIndex = 0;
+        this.persistLlm();
+      } else {
+        const at = result.models.indexOf(this.llmModel);
+        if (at >= 0) {
+          this.modelIndex = at;
+        }
+      }
+    });
   }
 
   private loadHarnessSettings(): void {
@@ -224,30 +279,14 @@ export struct SettingsSheet {
       this.llmBase = config.baseUrl;
       this.llmModel = config.model;
       this.llmToken = config.token;
+      this.llmEffort = config.effort;
+      if (config.baseUrl.length > 0) {
+        this.fetchModels();
+      }
     });
     loadExtraInstructions().then((text: string) => {
       this.extraPrompt = text;
     });
-  }
-
-  @Builder
-  TextRow(title: string, value: string, placeholder: string, onChange: (v: string) => void) {
-    Column({ space: 6 }) {
-      Text(title).fontSize(15).fontColor(this.p().textPrimary).width('100%')
-      TextInput({ text: value, placeholder: placeholder })
-        .height(40)
-        .width('100%')
-        .fontSize(14)
-        .fontColor(this.p().textPrimary)
-        .placeholderColor(this.p().textTertiary)
-        .backgroundColor(this.p().card)
-        .borderRadius(12)
-        .padding({ left: 12, right: 12 })
-        .onChange((v: string) => {
-          onChange(v);
-        })
-    }
-    .width('100%')
   }
 
   @Builder
@@ -381,22 +420,151 @@ export struct SettingsSheet {
       Scroll() {
         Column({ space: 8 }) {
           this.Section('模型接入')
-          this.TextRow('地址', this.llmBase, 'OpenAI 兼容 base URL', (v: string) => {
-            this.llmBase = v;
-            this.persistLlm();
-          })
-          this.TextRow('模型', this.llmModel, '模型名', (v: string) => {
-            this.llmModel = v;
-            this.persistLlm();
-          })
-          this.TextRow('密钥', this.llmToken, 'API key', (v: string) => {
-            this.llmToken = v;
-            this.persistLlm();
-          })
-          this.TextRow('附加指令', this.extraPrompt, '追加到系统提示末尾', (v: string) => {
-            this.extraPrompt = v;
-            saveExtraInstructions(v);
-          })
+          Column({ space: 8 }) {
+            Text('接口地址')
+              .fontSize(15)
+              .fontColor(this.p().textPrimary)
+              .width('100%')
+            TextInput({ text: $$this.llmBase, placeholder: 'https://api.deepseek.com/v1' })
+              .height(40)
+              .width('100%')
+              .fontSize(14)
+              .fontColor(this.p().textPrimary)
+              .placeholderColor(this.p().textTertiary)
+              .backgroundColor(this.p().bg)
+              .borderRadius(10)
+              .padding({ left: 12, right: 12 })
+              .onChange(() => {
+                this.persistLlm();
+              })
+              .onBlur(() => {
+                this.fetchModels();
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          .borderRadius(14)
+          .backgroundColor(this.p().card)
+
+          Column({ space: 8 }) {
+            Row() {
+              Text('模型')
+                .fontSize(15)
+                .fontColor(this.p().textPrimary)
+              Blank()
+              Text(this.modelState)
+                .fontSize(12)
+                .fontColor(this.p().textTertiary)
+            }
+            .width('100%')
+
+            Select(this.modelOptions.length > 0 ? this.modelOptions :
+              [{ value: this.llmModel.length > 0 ? this.llmModel : '—' }])
+              .selected(this.modelIndex)
+              .value(this.llmModel.length > 0 ? this.llmModel : '—')
+              .font({ size: 14 })
+              .fontColor(this.p().textPrimary)
+              .backgroundColor(this.p().bg)
+              .borderRadius(10)
+              .enabled(this.modelOptions.length > 0)
+              .width('100%')
+              .height(40)
+              .onSelect((index: number, value: string) => {
+                this.modelIndex = index;
+                this.llmModel = value;
+                this.persistLlm();
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          .borderRadius(14)
+          .backgroundColor(this.p().card)
+
+          Column({ space: 8 }) {
+            Text('密钥')
+              .fontSize(15)
+              .fontColor(this.p().textPrimary)
+              .width('100%')
+            TextInput({ text: $$this.llmToken, placeholder: 'API key' })
+              .type(InputType.Password)
+              .height(40)
+              .width('100%')
+              .fontSize(14)
+              .fontColor(this.p().textPrimary)
+              .placeholderColor(this.p().textTertiary)
+              .backgroundColor(this.p().bg)
+              .borderRadius(10)
+              .padding({ left: 12, right: 12 })
+              .onChange(() => {
+                this.persistLlm();
+              })
+              .onBlur(() => {
+                this.fetchModels();
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          .borderRadius(14)
+          .backgroundColor(this.p().card)
+
+          Column({ space: 8 }) {
+            Row() {
+              Text('思考强度')
+                .fontSize(15)
+                .fontColor(this.p().textPrimary)
+              Blank()
+              Text('默认不传')
+                .fontSize(12)
+                .fontColor(this.p().textTertiary)
+            }
+            .width('100%')
+
+            Row({ space: 8 }) {
+              ForEach([['', '默认'], ['low', '低'], ['medium', '中'], ['high', '高']],
+                (pair: string[]) => {
+                  Text(pair[1])
+                    .fontSize(13)
+                    .fontColor(this.llmEffort === pair[0] ? this.p().textPrimary : this.p().textSecondary)
+                    .height(34)
+                    .layoutWeight(1)
+                    .textAlign(TextAlign.Center)
+                    .backgroundColor(this.llmEffort === pair[0] ? this.p().brandSoft : this.p().bg)
+                    .borderRadius(8)
+                    .onClick(() => {
+                      this.llmEffort = pair[0];
+                      this.persistLlm();
+                    })
+                }, (pair: string[]) => pair[0] + pair[1])
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          .borderRadius(14)
+          .backgroundColor(this.p().card)
+
+          Column({ space: 8 }) {
+            Text('附加指令')
+              .fontSize(15)
+              .fontColor(this.p().textPrimary)
+              .width('100%')
+            TextArea({ text: $$this.extraPrompt, placeholder: '例如：改完代码先跑 build 再回复我' })
+              .width('100%')
+              .height(88)
+              .fontSize(14)
+              .fontColor(this.p().textPrimary)
+              .placeholderColor(this.p().textTertiary)
+              .backgroundColor(this.p().bg)
+              .borderRadius(10)
+              .padding(12)
+              .onChange(() => {
+                saveExtraInstructions(this.extraPrompt);
+              })
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          .borderRadius(14)
+          .backgroundColor(this.p().card)
 
           this.Section('SDK')
           this.StatusRow('内置 SDK 目录', this.sdkState())
