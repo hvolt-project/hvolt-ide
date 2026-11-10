@@ -43,88 +43,6 @@ function registerPing(): void {
 
 // Proves binding, framing, dispatch and both reply paths by calling the endpoint it just
 // started: one listing, one known tool, one unknown tool.
-let probeRoot: () => string = () => '';
-
-function ctxProjectDir(): string {
-  return probeRoot();
-}
-
-async function selfCheck(port: number, projectDir: () => string): Promise<void> {
-  probeRoot = projectDir;
-  const client = socket.constructTCPSocketInstance();
-  const decoder = util.TextDecoder.create('utf-8');
-  const inbox: string[] = [];
-
-  // One datagram may carry several replies: split on newlines so the count matches requests.
-  client.on('message', (info: socket.SocketMessageInfo) => {
-    const text = decoder.decodeToString(new Uint8Array(info.message));
-    for (const line of text.split('\n')) {
-      const trimmed = line.trim();
-      if (trimmed.length > 0) {
-        inbox.push(trimmed);
-      }
-    }
-  });
-
-  const waitFor = async (count: number): Promise<string[]> => {
-    const deadline = Date.now() + 3000;
-    while (inbox.length < count && Date.now() < deadline) {
-      await new Promise<void>((resolve) => {
-        setTimeout(resolve, 20);
-      });
-    }
-    return inbox;
-  };
-
-  try {
-    const target: socket.TCPConnectOptions = {
-      address: { address: '127.0.0.1', port: port, family: 1 }
-    };
-    await client.connect(target);
-    const call = (id: string, name: string, args: Record<string, Object>): string => {
-      return JSON.stringify({
-        'jsonrpc': '2.0', 'id': id, 'method': 'tools/call',
-        'params': { 'name': name, 'arguments': args }
-      });
-    };
-    const calls: string[] = [
-      JSON.stringify({ 'jsonrpc': '2.0', 'id': 'list', 'method': 'tools/list', 'params': {} }),
-      call('ping', 'ping', { 'text': 'ok' }),
-      call('missing', 'no-such-tool', {}),
-      call('glob', 'glob', { 'pattern': '**/*.ets' }),
-      call('grep', 'grep', { 'pattern': 'hvolt', 'include': '**/*.ets' }),
-      call('read', 'read', { 'path': 'hvolt.toml' }),
-      call('write', 'write', { 'path': 'harness-probe.txt', 'content': 'a\nb\na' }),
-      call('readback', 'read', { 'path': 'harness-probe.txt' }),
-      call('editdup', 'edit', { 'path': 'harness-probe.txt', 'old_string': 'a', 'new_string': 'z' }),
-      call('log', 'read_log', { 'lines': 3 }),
-      call('devices', 'devices', {}),
-      call('shellgate', 'shell', { 'command': 'echo hi' }),
-      call('sdk', 'sdk_search', { 'query': 'createWatcher', 'limit': 2 }),
-      call('sdkread', 'sdk_read', { 'file': '@ohos.file.fs.d.ts', 'line': 1291, 'lines': 6 })
-    ];
-    for (const body of calls) {
-      await client.send({ data: body + '\n' });
-    }
-    const replies = await waitFor(calls.length);
-    for (const reply of replies) {
-      hilog.info(0x0000, 'hvoltide', 'mcp selfcheck: %{public}s', reply.substring(0, 220));
-    }
-  } catch (e) {
-    hilog.warn(0x0000, 'hvoltide', 'mcp selfcheck failed: %{public}s', (e as Error).message);
-  } finally {
-    client.close().catch(() => {
-    });
-    // The probe file exists only to prove write/read/edit agree; leave no litter behind.
-    const probe = ctxProjectDir() + '/harness-probe.txt';
-    try {
-      fs.unlinkSync(probe);
-    } catch (e) {
-    }
-  }
-}
-
-
 let running: McpServer | undefined = undefined;
 
 /** Starts the endpoint once. Failures are logged, never thrown at the caller: an IDE that cannot
@@ -153,8 +71,7 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   const server = new McpServer();
   server.start(registry, MCP_PORT).then(() => {
     running = server;
-    selfCheck(MCP_PORT, ctx.projectDir).catch(() => {
-    });
+    hilog.info(0x0000, 'hvoltide', 'mcp tools: %{public}d', registry.descriptors().length);
   }).catch((e: Error) => {
     hilog.warn(0x0000, 'hvoltide', 'mcp endpoint unavailable: %{public}s', e.message);
   });
