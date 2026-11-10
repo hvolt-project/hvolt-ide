@@ -18,6 +18,7 @@ import {
   writeSource
 } from './Project';
 import fs from '@ohos.file.fs';
+import { startHarness } from '../harness/Harness';
 import hilog from '@ohos.hilog';
 import { readPref, writePref } from './Prefs';
 import { connectAsync, hvoltAsync, streamNextAsync } from './Connect';
@@ -225,6 +226,8 @@ export class Session {
     this.queryAgc();
     this.onChange();
     this.stageAll();
+    // The endpoint is a side facility: a bind failure leaves a working editor and one log line.
+    startHarness();
   }
 
   // Called once the page has finished loading. No script is issued from here: a
