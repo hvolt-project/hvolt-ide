@@ -50,7 +50,17 @@ function toolSchema(): Object[] {
 function toWire(messages: ChatMessage[]): Object[] {
   const out: Object[] = [];
   for (const message of messages) {
-    const row: Record<string, Object> = { 'role': message.role, 'content': message.content };
+    // The runtime block rides with the request but is not part of what the user said.
+    const body = message.context.length > 0 ? message.context + '\n\n' + message.content : message.content;
+    const row: Record<string, Object> = { 'role': message.role, 'content': body };
+    if (message.images.length > 0) {
+      // Multimodal content: the text part plus one image part per attachment.
+      const parts: Object[] = [{ 'type': 'text', 'text': body }];
+      for (const image of message.images) {
+        parts.push({ 'type': 'image_url', 'image_url': { 'url': image } });
+      }
+      row['content'] = parts;
+    }
     if (message.toolCalls.length > 0) {
       const calls: Object[] = [];
       for (const call of message.toolCalls) {

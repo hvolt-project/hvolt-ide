@@ -1,3 +1,4 @@
+import hilog from '@ohos.hilog';
 // The loop: ask the model, run the tools it asks for, feed the results back, repeat until it
 // stops asking. Deliberately small — one conversation, one tool table, no sub-agents.
 //
@@ -61,7 +62,8 @@ export class ChatSession {
     return this.history;
   }
 
-  async send(config: LlmConfig, userText: string, sink: LoopSink): Promise<void> {
+  async send(config: LlmConfig, userText: string, context: string, images: string[],
+    sink: LoopSink): Promise<void> {
     if (this.running) {
       sink.onError('a turn is already running');
       return;
@@ -69,7 +71,9 @@ export class ChatSession {
     if (this.history.length === 0 || this.history[0].role !== 'system') {
       this.history.unshift({ role: 'system', content: '', toolCalls: [], toolCallId: '' });
     }
-    this.history.push(userMessage(userText));
+    const said = userMessage(userText, images);
+    said.context = context;
+    this.history.push(said);
     this.running = true;
     this.abort = new AbortFlag();
     const startedAt = Date.now();
@@ -112,7 +116,10 @@ export class ChatSession {
         }, this.abort);
 
         const assembled = text.join('');
-        this.history.push(assistantMessage(assembled, calls, thought.join('')));
+        const reasoning = thought.join('');
+        hilog.info(0x0000, 'hvoltide', 'round done: text=%{public}d reasoning=%{public}d tools=%{public}d',
+          assembled.length, reasoning.length, calls.length);
+        this.history.push(assistantMessage(assembled, calls, reasoning));
         if (failure.length > 0) {
           sink.onError(failure);
           break;

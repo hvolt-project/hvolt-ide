@@ -36,3 +36,9 @@ name = "ohos.permission.INTERNET"
 reason = "$string:internet_reason"
 abilities = ["EntryAbility"]
 when = "always"
+
+[[module.permissions]]
+name = "ohos.permission.MICROPHONE"
+reason = "$string:mic_reason"
+abilities = ["EntryAbility"]
+when = "inuse"

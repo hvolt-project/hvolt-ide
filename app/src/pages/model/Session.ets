@@ -205,7 +205,7 @@ export class Session {
   }
 
   /** Runs one chat turn, reporting each event to the caller for rendering. */
-  async chatSend(userText: string,
+  async chatSend(userText: string, images: string[],
     onEvent: (kind: string, text: string) => void): Promise<void> {
     const config: LlmConfig = await loadLlmConfig();
     if (!config.ready()) {
@@ -222,7 +222,7 @@ export class Session {
       deviceAddress: this.device,
       connected: this.link === 2
     });
-    await this.chat.send(config, state + '\n\n' + userText, {
+    await this.chat.send(config, userText, state, images, {
       onText: (delta: string) => {
         onEvent('text', delta);
       },
@@ -254,6 +254,8 @@ export class Session {
 
   chatReset(): void {
     this.chat.reset();
+    // Clearing must survive a restart: otherwise the old transcript comes back on next launch.
+    this.saveChat();
   }
 
   private dir(): string {

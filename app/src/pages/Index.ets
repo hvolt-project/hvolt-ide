@@ -15,8 +15,29 @@ import { LeftPane } from './view/SidePanes';
 import { BottomDock } from './view/BottomDock';
 import { ChatPanel, ChatLine, FoldMode } from './view/ChatPanel';
 import { setChatHandler } from './model/Bridge';
+import { LlmConfig, loadLlmConfig } from './harness/loop/Settings';
 import { EditorArea } from './view/EditorArea';
 import { SettingsSheet } from './view/SettingsSheet';
+
+/** The endpoint identity shown under the project name: host minus the api. prefix. */
+function providerOf(baseUrl: string): string {
+  if (baseUrl.trim().length === 0) {
+    return '';
+  }
+  let host = baseUrl.trim();
+  const slash = host.indexOf('://');
+  if (slash >= 0) {
+    host = host.substring(slash + 3);
+  }
+  const cut = host.indexOf('/');
+  if (cut >= 0) {
+    host = host.substring(0, cut);
+  }
+  if (host.startsWith('api.')) {
+    host = host.substring(4);
+  }
+  return host;
+}
 
 @Entry
 @Component
@@ -31,6 +52,8 @@ struct Index {
   @State chatOpen: boolean = false;
   @State chatBusy: boolean = false;
   @State chatLines: ChatLine[] = [];
+  @State modelLabel: string = '';
+  @State providerLabel: string = '';
   @State panelTab: number = 0;
   @State showSettings: boolean = false;
   @State dark: boolean = true;
@@ -115,6 +138,9 @@ struct Index {
   }
 
   aboutToAppear(): void {
+    // Shrinking the page instead of lifting it: with OFFSET the whole surface (header included)
+    // slides up when the keyboard opens, which is what made the title look wrong.
+    this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
     try {
       this.screenH = px2vp(display.getDefaultDisplaySync().height);
     } catch (e) {
@@ -124,6 +150,11 @@ struct Index {
       this.publish();
       this.syncChatFromHistory();
     };
+    loadLlmConfig().then((config: LlmConfig) => {
+      this.modelLabel = config.model;
+      this.providerLabel = providerOf(config.baseUrl);
+    }).catch(() => {
+    });
     setChatHandler(() => {
       animateTo({ duration: DURATION, curve: spring() }, () => {
         this.chatOpen = true;
@@ -266,10 +297,10 @@ struct Index {
     return 'normal';
   }
 
-  private sendChat(text: string): void {
+  private sendChat(text: string, images: string[]): void {
     this.appendChat('user', text);
     this.chatBusy = true;
-    this.session.chatSend(text, (kind: string, body: string) => {
+    this.session.chatSend(text, images, (kind: string, body: string) => {
       this.appendChat(kind, body);
       if (kind === 'done') {
         this.chatBusy = false;
@@ -687,11 +718,15 @@ struct Index {
         ChatPanel({
           dark: this.isDark(),
           mode: this.chatMode(),
+          project: this.session.project,
+          provider: this.providerLabel,
+          model: this.modelLabel,
+          files: this.session.files,
           lines: $chatLines,
           busy: $chatBusy,
           actions: {
-            send: (text: string) => {
-              this.sendChat(text);
+            send: (text: string, images: string[]) => {
+              this.sendChat(text, images);
             },
             stop: () => {
               this.session.chatStop();

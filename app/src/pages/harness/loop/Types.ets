@@ -8,6 +8,10 @@ export interface ChatMessage {
   content: string;
   /** Reasoning text, when the model emits one; kept so later turns can send it back. */
   reasoning: string;
+  /** Per-turn runtime state sent alongside the message but never shown or stored as its text. */
+  context: string;
+  /** Images attached to this message, as data URLs. */
+  images: string[];
   /** Set on assistant messages that ask for tools. */
   toolCalls: ToolCall[];
   /** Set on tool results: which call they answer. */

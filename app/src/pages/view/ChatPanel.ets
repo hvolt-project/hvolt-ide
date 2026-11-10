@@ -3,11 +3,15 @@
 import { palette, Palette } from '../model/Palette';
 import { MarkdownView } from './MarkdownView';
 import { buildBlocks, ChatBlock, ChatKind, ChatLine, FoldMode } from './ChatBlocks';
+import { AsrSession } from '../harness/asr/Asr';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
+import fs from '@ohos.file.fs';
+import util from '@ohos.util';
 
 export { ChatKind, ChatLine, FoldMode } from './ChatBlocks';
 
 export interface ChatActions {
-  send: (text: string) => void;
+  send: (text: string, images: string[]) => void;
   stop: () => void;
   reset: () => void;
   close: () => void;
@@ -17,6 +21,12 @@ export interface ChatActions {
 export struct ChatPanel {
   @Prop dark: boolean = true;
   @Prop mode: FoldMode = 'normal';
+  /** Project name is the headline; the endpoint identity sits under it. */
+  @Prop project: string = '';
+  @Prop provider: string = '';
+  @Prop model: string = '';
+  /** Project files, for @ completion. */
+  @Prop files: string[] = [];
   @Link lines: ChatLine[];
   @Link busy: boolean;
   actions: ChatActions = {
@@ -30,11 +40,164 @@ export struct ChatPanel {
     }
   };
   @State private draft: string = '';
+  /** Completion slate shown above the input while the draft starts with / or @. */
+  @State private suggest: string[] = [];
+  @State private suggestKind: string = '';
+  @State private asrActive: boolean = false;
+  /** Attachments for the next message, as data URLs. */
+  @State private attachments: string[] = [];
+  private asr: AsrSession = new AsrSession();
+  /** Draft text before dictation, so interim results do not stack up. */
+  private asrBase: string = '';
   /** The reader's own open/closed choices; they outlive a mode switch. */
   @State private toggled: Map<string, boolean> = new Map();
 
+  private endpointLabel(): string {
+    const host = this.provider.length > 0 ? this.provider : '未配置';
+    const model = this.model.length > 0 ? this.model : '—';
+    return host + ' · ' + model;
+  }
+
   private p(): Palette {
     return palette(this.dark);
+  }
+
+  /** Picks images and inlines them as data URLs, so a message is self-contained. */
+  private async pickImages(): Promise<void> {
+    try {
+      const picker = new photoAccessHelper.PhotoViewPicker();
+      const picked = await picker.select({
+        MIMEType: photoAccessHelper.PhotoViewMIMETypes.IMAGE_TYPE,
+        maxSelectNumber: 4
+      });
+      if (picked.photoUris === undefined || picked.photoUris.length === 0) {
+        return;
+      }
+      const added: string[] = this.attachments.slice();
+      for (const uri of picked.photoUris) {
+        const file = fs.openSync(uri, fs.OpenMode.READ_ONLY);
+        let bytes: Uint8Array;
+        try {
+          bytes = new Uint8Array(fs.statSync(file.fd).size);
+          fs.readSync(file.fd, bytes.buffer);
+        } finally {
+          fs.closeSync(file);
+        }
+        const encoder = new util.Base64Helper();
+        const b64 = encoder.encodeToStringSync(bytes);
+        const mime = uri.toLowerCase().includes('.png') ? 'image/png' : 'image/jpeg';
+        added.push('data:' + mime + ';base64,' + b64);
+      }
+      this.attachments = added;
+    } catch (e) {
+      this.showToast('选图失败：' + (e as Error).message);
+    }
+  }
+
+  private startDictation(): void {
+    if (this.busy || this.asrActive) {
+      return;
+    }
+    this.asrBase = this.draft.length > 0 ? this.draft + ' ' : '';
+    this.asrActive = true;
+    this.asr.start((text: string, final: boolean) => {
+      this.draft = this.asrBase + text;
+    }, (message: string) => {
+      this.asrActive = false;
+      this.showToast(message);
+    }).catch(() => {
+      this.asrActive = false;
+    });
+  }
+
+  private stopDictation(): void {
+    if (!this.asrActive) {
+      return;
+    }
+    this.asrActive = false;
+    this.asr.stop();
+  }
+
+  private showToast(message: string): void {
+    this.getUIContext().getPromptAction().showToast({ message: message, duration: 2000 });
+  }
+
+  /** Completes the token being typed: commands after /, project files after @. */
+  private refreshSuggest(draft: string): void {
+    const text = draft.trimStart();
+    if (text.startsWith('/')) {
+      const commands = ['/reset', '/clear', '/help'];
+      const typed = text.toLowerCase();
+      this.suggestKind = 'cmd';
+      this.suggest = commands.filter((c: string) => c.startsWith(typed) && c !== typed);
+      return;
+    }
+    const at = text.lastIndexOf('@');
+    if (at >= 0 && !text.substring(at).includes(' ')) {
+      const typed = text.substring(at + 1).toLowerCase();
+      this.suggestKind = 'file';
+      this.suggest = this.files
+        .filter((f: string) => f.toLowerCase().includes(typed))
+        .slice(0, 8);
+      return;
+    }
+    this.suggest = [];
+    this.suggestKind = '';
+  }
+
+  private commandHint(item: string): string {
+    if (item === '/reset' || item === '/clear') {
+      return '清空这段对话';
+    }
+    if (item === '/help') {
+      return '显示可用命令与引用方式';
+    }
+    return '';
+  }
+
+  private accept(item: string): void {
+    if (this.suggestKind === 'cmd') {
+      this.draft = item;
+    } else {
+      const at = this.draft.lastIndexOf('@');
+      this.draft = at >= 0 ? this.draft.substring(0, at) + '@' + item + ' ' : this.draft + item;
+    }
+    this.suggest = [];
+    this.suggestKind = '';
+  }
+
+  /** Slash commands are ordinary text until sent; nothing opens a separate mode. */
+  private submit(): void {
+    const text = this.draft.trim();
+    if (text.length === 0 || this.busy) {
+      return;
+    }
+    this.draft = '';
+    if (text === '/reset' || text === '/clear') {
+      this.confirmClear();
+      return;
+    }
+    this.actions.send(text);
+  }
+
+  private confirmClear(): void {
+    AlertDialog.show({
+      title: '清空这段对话？',
+      message: '对话记录会从这台设备上删除，无法恢复。',
+      autoCancel: true,
+      primaryButton: {
+        value: '取消',
+        action: () => {
+        }
+      },
+      secondaryButton: {
+        value: '清空',
+        fontColor: '#E5484D',
+        action: () => {
+          this.actions.reset();
+        }
+      }
+    });
   }
 
   private flip(key: string, current: boolean): void {
@@ -128,10 +291,17 @@ export struct ChatPanel {
   build() {
     Column() {
       Row({ space: 10 }) {
-        Text('对话')
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
+        Text(this.project.length > 0 ? this.project : '未打开工程')
+          .fontSize(17)
+          .fontWeight(FontWeight.Bold)
           .fontColor(this.p().textPrimary)
+          .maxLines(1)
+        Text(this.endpointLabel())
+          .fontSize(11)
+          .fontColor(this.p().textTertiary)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .layoutWeight(1)
         Blank()
         if (this.busy) {
           Text('停止')
@@ -142,20 +312,7 @@ export struct ChatPanel {
               this.actions.stop();
             })
         }
-        Text('清空')
-          .fontSize(13)
-          .fontColor(this.p().textSecondary)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .onClick(() => {
-            this.actions.reset();
-          })
-        Text('返回')
-          .fontSize(13)
-          .fontColor(this.p().textSecondary)
-          .padding({ left: 10, right: 10, top: 6, bottom: 6 })
-          .onClick(() => {
-            this.actions.close();
-          })
+
       }
       .width('100%')
       .height(48)
@@ -166,41 +323,132 @@ export struct ChatPanel {
           ListItem() {
             this.Block(block)
           }
-        }, (block: ChatBlock) => block.key + ':' + block.text.length + ':' + block.items.length)
+        }, (block: ChatBlock) => block.key + ':' + block.open + ':' + block.text.length + ':' + block.items.length)
+
       }
       .layoutWeight(1)
       .width('100%')
       .padding({ left: 12, right: 12 })
 
+      if (this.suggest.length > 0) {
+        List({ space: 0 }) {
+          ForEach(this.suggest, (item: string) => {
+            ListItem() {
+              Row({ space: 8 }) {
+                Text(this.suggestKind === 'cmd' ? item : '@' + item)
+                  .fontSize(13)
+                  .fontColor(this.p().textPrimary)
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .flexShrink(1)
+                if (this.suggestKind === 'cmd') {
+                  Text(this.commandHint(item))
+                    .fontSize(11)
+                    .fontColor(this.p().textTertiary)
+                }
+              }
+              .width('100%')
+              .padding({ left: 14, right: 14, top: 10, bottom: 10 })
+              .onClick(() => {
+                this.accept(item);
+              })
+            }
+          }, (item: string) => this.suggestKind + ':' + item)
+        }
+        .width('100%')
+        .constraintSize({ maxHeight: 208 })
+        .backgroundColor(this.p().card)
+        .borderRadius(12)
+        .margin({ left: 12, right: 12, bottom: 6 })
+      }
+
+      if (this.attachments.length > 0) {
+        Row({ space: 8 }) {
+          ForEach(this.attachments, (image: string, index: number) => {
+            Stack({ alignContent: Alignment.TopEnd }) {
+              Image(image)
+                .width(52)
+                .height(52)
+                .borderRadius(8)
+                .objectFit(ImageFit.Cover)
+              Text('×')
+                .fontSize(12)
+                .fontColor('#FFFFFF')
+                .width(18)
+                .height(18)
+                .textAlign(TextAlign.Center)
+                .backgroundColor('#00000088')
+                .borderRadius(9)
+                .onClick(() => {
+                  const next: string[] = this.attachments.slice();
+                  next.splice(index, 1);
+                  this.attachments = next;
+                })
+            }
+          }, (image: string, index: number) => index + ':' + image.length)
+        }
+        .width('100%')
+        .padding({ left: 12, right: 12, bottom: 6 })
+      }
+
       Row({ space: 8 }) {
-        TextInput({ text: this.draft, placeholder: '说点什么，或让助手改代码' })
+        Stack() {
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(16)
+            .fontColor([this.p().textSecondary])
+        }
+        .width(38)
+        .height(36)
+        .borderRadius(10)
+        .backgroundColor(this.p().card)
+        .onClick(() => {
+          this.pickImages();
+        })
+
+        TextArea({ text: this.draft, placeholder: '说点什么，/ 命令，@ 引用文件' })
           .layoutWeight(1)
-          .height(42)
+          .constraintSize({ minHeight: 42, maxHeight: 132 })
           .fontSize(14)
           .fontColor(this.p().textPrimary)
           .placeholderColor(this.p().textTertiary)
           .backgroundColor(this.p().card)
           .borderRadius(12)
-          .padding({ left: 12, right: 12 })
+          // TextArea draws from the top; at the single-line height the padding is what centres
+          // the text, and it stays correct once the box grows because the content pushes it.
+          .padding({ left: 12, right: 12, top: 11, bottom: 11 })
           .onChange((v: string) => {
             this.draft = v;
+            this.refreshSuggest(v);
           })
-        Text('发送')
-          .fontSize(14)
-          .fontColor(this.p().textPrimary)
-          .height(42)
-          .padding({ left: 16, right: 16 })
-          .textAlign(TextAlign.Center)
-          .backgroundColor(this.p().brandSoft)
-          .borderRadius(12)
-          .onClick(() => {
-            const text = this.draft.trim();
-            if (text.length === 0 || this.busy) {
-              return;
-            }
-            this.draft = '';
-            this.actions.send(text);
-          })
+        Stack() {
+          SymbolGlyph($r('sys.symbol.mic_fill'))
+            .fontSize(16)
+            .fontColor([this.asrActive ? '#E5484D' : this.p().textSecondary])
+        }
+        .width(38)
+        .height(36)
+        .borderRadius(10)
+        .backgroundColor(this.asrActive ? '#E5484D22' : this.p().card)
+        .onTouch((event: TouchEvent) => {
+          if (event.type === TouchType.Down) {
+            this.startDictation();
+          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+            this.stopDictation();
+          }
+        })
+
+        Stack() {
+          SymbolGlyph($r('sys.symbol.paperplane_fill'))
+            .fontSize(16)
+            .fontColor([this.p().textPrimary])
+        }
+        .width(38)
+        .height(36)
+        .backgroundColor(this.p().brandSoft)
+        .borderRadius(10)
+        .onClick(() => {
+          this.submit();
+        })
       }
       .width('100%')
       .padding({ left: 12, right: 12, top: 8, bottom: 12 })

@@ -19,6 +19,10 @@
     {
       "name": "internet_reason",
       "value": "connect to the local device daemon"
+    },
+    {
+      "name": "mic_reason",
+      "value": "语音输入需要使用麦克风"
     }
   ]
 }
