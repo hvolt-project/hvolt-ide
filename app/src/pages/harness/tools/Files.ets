@@ -13,7 +13,7 @@ export interface FileContext {
 const MAX_READ_BYTES: number = 200 * 1024;
 const MAX_GREP_HITS: number = 200;
 
-function requireProject(ctx: FileContext): string {
+export function requireProject(ctx: FileContext): string {
   const root = ctx.projectDir();
   if (root.length === 0) {
     throw new Error('no project is open');

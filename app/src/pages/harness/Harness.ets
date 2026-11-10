@@ -1,12 +1,15 @@
 // Registration point for the MCP endpoint. Every tool is listed here once; nothing else knows
 // the tool names.
 
+import fs from '@ohos.file.fs';
 import hilog from '@ohos.hilog';
 import socket from '@ohos.net.socket';
 import util from '@ohos.util';
 import { McpServer } from './mcp/Server';
 import { TOOLS, ToolRegistry } from './mcp/Registry';
 import { FileContext, registerFileTools } from './tools/Files';
+import { registerWriteTool } from './tools/Write';
+import { registerEditTool } from './tools/Edit';
 
 /** Port the loopback endpoint binds to; the built-in client uses the same number. */
 export const MCP_PORT: number = 8765;
@@ -33,7 +36,14 @@ function registerPing(): void {
 
 // Proves binding, framing, dispatch and both reply paths by calling the endpoint it just
 // started: one listing, one known tool, one unknown tool.
-async function selfCheck(port: number): Promise<void> {
+let probeRoot: () => string = () => '';
+
+function ctxProjectDir(): string {
+  return probeRoot();
+}
+
+async function selfCheck(port: number, projectDir: () => string): Promise<void> {
+  probeRoot = projectDir;
   const client = socket.constructTCPSocketInstance();
   const decoder = util.TextDecoder.create('utf-8');
   const inbox: string[] = [];
@@ -76,7 +86,10 @@ async function selfCheck(port: number): Promise<void> {
       call('missing', 'no-such-tool', {}),
       call('glob', 'glob', { 'pattern': '**/*.ets' }),
       call('grep', 'grep', { 'pattern': 'hvolt', 'include': '**/*.ets' }),
-      call('read', 'read', { 'path': 'hvolt.toml' })
+      call('read', 'read', { 'path': 'hvolt.toml' }),
+      call('write', 'write', { 'path': 'harness-probe.txt', 'content': 'a\nb\na' }),
+      call('readback', 'read', { 'path': 'harness-probe.txt' }),
+      call('editdup', 'edit', { 'path': 'harness-probe.txt', 'old_string': 'a', 'new_string': 'z' })
     ];
     for (const body of calls) {
       await client.send({ data: body + '\n' });
@@ -90,6 +103,12 @@ async function selfCheck(port: number): Promise<void> {
   } finally {
     client.close().catch(() => {
     });
+    // The probe file exists only to prove write/read/edit agree; leave no litter behind.
+    const probe = ctxProjectDir() + '/harness-probe.txt';
+    try {
+      fs.unlinkSync(probe);
+    } catch (e) {
+    }
   }
 }
 
@@ -103,10 +122,12 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   }
   registerPing();
   registerFileTools(registry, ctx);
+  registerWriteTool(registry, ctx);
+  registerEditTool(registry, ctx);
   const server = new McpServer();
   server.start(registry, MCP_PORT).then(() => {
     running = server;
-    selfCheck(MCP_PORT).catch(() => {
+    selfCheck(MCP_PORT, ctx.projectDir).catch(() => {
     });
   }).catch((e: Error) => {
     hilog.warn(0x0000, 'hvoltide', 'mcp endpoint unavailable: %{public}s', e.message);
