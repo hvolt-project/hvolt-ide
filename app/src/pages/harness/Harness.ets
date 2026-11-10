@@ -120,6 +120,7 @@ async function selfCheck(port: number, projectDir: () => string): Promise<void> 
   }
 }
 
+
 let running: McpServer | undefined = undefined;
 
 /** Starts the endpoint once. Failures are logged, never thrown at the caller: an IDE that cannot
