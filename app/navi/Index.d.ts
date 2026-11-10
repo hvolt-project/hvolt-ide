@@ -1,0 +1,8 @@
+export const probe: () => string;
+export const buildInProc: (filesDir: string) => string;
+export const hvoltCall: (argvJson: string, cwd: string, filesDir: string) => string;
+export const execProbe: (path: string) => string;
+export const streamStart: (paramsJson: string, filesDir: string) => string;
+export const streamRead: (handle: number, from: number, max: number) => string;
+export const streamNext: (handle: number, from: number, max: number, waitMs: number) => string;
+export const streamStop: (handle: number) => void;

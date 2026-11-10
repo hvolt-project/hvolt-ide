@@ -1,0 +1,24 @@
+{
+  "string": [
+    {
+      "name": "app_name",
+      "value": "hvolt IDE"
+    },
+    {
+      "name": "module_desc",
+      "value": "设备端鸿蒙开发 IDE"
+    },
+    {
+      "name": "EntryAbility_desc",
+      "value": "hvolt IDE 主界面"
+    },
+    {
+      "name": "EntryAbility_label",
+      "value": "hvolt IDE"
+    },
+    {
+      "name": "internet_reason",
+      "value": "connect to the local device daemon"
+    }
+  ]
+}

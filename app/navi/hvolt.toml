@@ -1,0 +1,5 @@
+name = "navi"
+type = "native"
+types = "Index.d.ts"
+version = "1.0.0"
+description = "dlopen probe for libes2abc"

@@ -1,0 +1,14 @@
+# Local build outputs and scratch state (never published)
+probe/build/
+probe/.hvigor/
+probe/layout-*.json
+artifacts/
+rawsign/
+# AGC token + hdc key pair copied for local signing runs; contains credentials
+.signhome/
+
+# Build output and tool caches: reproducible from source + the SDK
+app/build/
+.npmcache/
+.npmlogs/
+.edge-profile/

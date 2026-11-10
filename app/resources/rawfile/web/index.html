@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <title>hvolt ide</title>
+  <style>
+    html, body, #editor { height: 100%; margin: 0; padding: 0; background: #0D1116; }
+    #status { position: fixed; right: 8px; bottom: 6px; font: 11px system-ui; color: #6b7280; pointer-events: none; }
+  </style>
+</head>
+<body>
+  <div id="editor"></div>
+  <div id="status"></div>
+  <script src="./vs/loader.js"></script>
+  <script>
+    // A Monarch grammar stands in for the ArkTS language service: the app has no
+    // TypeScript worker on the device, and colouring is what the editor needs.
+    var editor = null;
+    var dirty = false;
+    // Pushing a file in is not an edit: the change events it fires must not mark the tab.
+    var loading = false;
+
+    function setStatus(text) {
+      document.getElementById('status').textContent = text || '';
+    }
+
+    window.hvoltSetText = function (text, language) {
+      if (!editor) { return false; }
+      var model = editor.getModel();
+      var lang = language || 'arkts';
+      try {
+        if (model && model.getLanguageId && model.getLanguageId() !== lang) {
+          monaco.editor.setModelLanguage(model, lang);
+        }
+        loading = true;
+        editor.setValue(text || '');
+        loading = false;
+      } catch (e) {
+        setStatus('set failed: ' + e);
+        return false;
+      }
+      dirty = false;
+      setStatus('');
+      return true;
+    };
+
+    // The shell drives these: Monaco's own minimap is the collapsed right rail,
+    // and the theme follows the system light/dark switch.
+    window.hvoltSetTheme = function (dark) {
+      window.__hvoltTheme = !!dark;
+      if (!editor) { return false; }
+      monaco.editor.setTheme(dark ? 'vs-dark' : 'vs');
+      return true;
+    };
+
+    window.hvoltSetMinimap = function (on) {
+      if (!editor) { return false; }
+      editor.updateOptions({ minimap: { enabled: !!on, size: 'fit', maxColumn: 72, showSlider: 'always', renderCharacters: false } });
+      return true;
+    };
+
+    // Font size, line numbers, wrapping and tab width are shell preferences; the shell
+    // sends them as one object so the editor never sees a half-applied set.
+    window.hvoltApplyOptions = function (o) {
+      if (!editor || !o) { return false; }
+      editor.updateOptions({
+        fontSize: o.fontSize || 14,
+        lineNumbers: o.lineNumbers ? 'on' : 'off',
+        wordWrap: o.wordWrap === false ? 'off' : 'on',
+        tabSize: o.tabSize || 2
+      });
+      return true;
+    };
+
+    window.hvoltGetText = function () {
+      return editor ? editor.getValue() : '';
+    };
+
+    window.hvoltIsDirty = function () {
+      return dirty;
+    };
+
+    require.config({ paths: { vs: './vs' } });
+    require(['vs/editor/editor.main'], function () {
+      monaco.languages.register({ id: 'arkts', extensions: ['.ets', '.ts'] });
+      monaco.languages.setMonarchTokensProvider('arkts', {
+        keywords: ['abstract', 'async', 'await', 'break', 'case', 'catch', 'class', 'const',
+          'continue', 'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'finally',
+          'for', 'from', 'function', 'get', 'if', 'implements', 'import', 'in', 'instanceof',
+          'interface', 'let', 'new', 'of', 'private', 'protected', 'public', 'readonly', 'return',
+          'set', 'static', 'super', 'switch', 'this', 'throw', 'try', 'type', 'typeof', 'var',
+          'void', 'while', 'yield', 'struct', 'decorator', 'Builder', 'Entry', 'Component',
+          'State', 'Prop', 'Link', 'Provide', 'Consume', 'ObjectLink', 'Watch'],
+        typeKeywords: ['boolean', 'number', 'string', 'any', 'unknown', 'never', 'object', 'symbol'],
+        operators: ['=', '>', '<', '!', '~', '?', ':', '==', '<=', '>=', '!=', '&&', '||', '++', '--',
+          '+', '-', '*', '/', '&', '|', '^', '%', '<<', '>>', '>>>', '+=', '-=', '*=', '/=', '&=',
+          '|=', '^=', '%='],
+        symbols: /[=><!~?:&|+\-*\/\^%]+/,
+        tokenizer: {
+          root: [
+            [/[a-zA-Z_$][\w$]*/, { cases: { '@typeKeywords': 'keyword.type',
+                                            '@keywords': 'keyword',
+                                            '@default': 'identifier' } }],
+            { include: '@whitespace' },
+            [/[{}()\[\]]/, '@brackets'],
+            [/[<>](?!@symbols)/, '@brackets'],
+            [/@symbols/, { cases: { '@operators': 'operator', '@default': '' } }],
+            [/\d*\.\d+([eE][\-+]?\d+)?/, 'number.float'],
+            [/0[xX][0-9a-fA-F]+/, 'number.hex'],
+            [/\d+/, 'number'],
+            [/[;,.]/, 'delimiter'],
+            [/"([^"\\]|\\.)*$/, 'string.invalid'],
+            [/'([^'\\]|\\.)*$/, 'string.invalid'],
+            [/"/, 'string', '@string_double'],
+            [/'/, 'string', '@string_single'],
+            [/`/, 'string', '@string_backtick'],
+          ],
+          whitespace: [[/[ \t\r\n]+/, '']],
+          comment: [[/[^\/*]+/, 'comment'], [/\/\*/, 'comment', '@push'], [/\*\//, 'comment', '@pop'], [/[\/*]/, 'comment']],
+          string_double: [[/[^\\"]+/, 'string'], [/\\./, 'string.escape.invalid'], [/"/, 'string', '@pop']],
+          string_single: [[/[^\\']+/, 'string'], [/\\./, 'string.escape.invalid'], [/'/, 'string', '@pop']],
+          string_backtick: [[/\$\{/, { token: 'delimiter.bracket', next: '@bracketCounting' }],
+            [/[^\\`$]+/, 'string'], [/\\./, 'string.escape.invalid'], [/`/, 'string', '@pop']],
+          bracketCounting: [[/\{/, 'delimiter.bracket', '@bracketCounting'],
+            [/\}/, 'delimiter.bracket', '@pop'], { include: 'root' }],
+        },
+      });
+
+      editor = monaco.editor.create(document.getElementById('editor'), {
+        value: '',
+        language: 'arkts',
+        theme: 'vs-dark',
+        automaticLayout: true,
+        fontSize: 13,
+        minimap: { enabled: true, size: 'fit', maxColumn: 72, showSlider: 'always', renderCharacters: false },
+        lineNumbersMinChars: 2,
+        glyphMargin: false,
+        folding: false,
+        lineDecorationsWidth: 6,
+        padding: { top: 8, bottom: 8 },
+        // Touch targets matter more than scroll affordances here: the scrollbar
+        // and the overview ruler are turned off to give the code the width.
+        scrollbar: { vertical: 'hidden', horizontal: 'hidden', useShadows: false, verticalScrollbarSize: 0, horizontalScrollbarSize: 0 },
+        // Sticky scroll paints a translucent band over the code on this device;
+        // with the chrome already carrying context it is pure noise here.
+        stickyScroll: { enabled: false },
+        occurrencesHighlight: 'off',
+        renderLineHighlight: 'none',
+        overviewRulerLanes: 0,
+        overviewRulerBorder: false,
+        hideCursorInOverviewRuler: true,
+        wordWrap: 'on',
+        scrollBeyondLastLine: false,
+        renderWhitespace: 'selection',
+        tabSize: 2,
+      });
+
+      // A drag pans the code; only a tap may take focus. Without this the IME springs up
+      // as soon as a swipe starts inside the text, which eats half the screen mid-gesture.
+      (function (node) {
+        var sx = 0, sy = 0, moved = false;
+        node.addEventListener('touchstart', function (e) {
+          var t = e.touches[0];
+          sx = t.clientX; sy = t.clientY; moved = false;
+        }, { passive: true });
+        node.addEventListener('touchmove', function (e) {
+          var t = e.touches[0];
+          if (moved) { return; }
+          if (Math.abs(t.clientX - sx) > 8 || Math.abs(t.clientY - sy) > 8) {
+            moved = true;
+            var ta = node.querySelector('textarea');
+            if (ta && document.activeElement === ta) { ta.blur(); }
+          }
+        }, { passive: true });
+      })(editor.getContainerDomNode());
+
+      // Scrolling down retracts the chrome; the first upward move brings it straight back.
+      // Seeded from the restored scroll position: starting at 0 would read the first
+      // event as a downward scroll and hide the chrome on every launch.
+      var lastTop = editor.getScrollTop();
+      var lastFire = 0;
+      editor.onDidScrollChange(function (e) {
+        var top = e.scrollTop;
+        var dy = top - lastTop;
+        lastTop = top;
+        var now = Date.now();
+        if (now - lastFire < 90 || Math.abs(dy) < 8) { return; }
+        lastFire = now;
+        var hide = top > 24 && dy > 0;
+        if (top <= 0) { hide = false; }
+        if (window.hvoltBridge && window.hvoltBridge.chromeHidden) {
+          window.hvoltBridge.chromeHidden(hide);
+        }
+      });
+
+      editor.onDidChangeCursorPosition(function (e) {
+        if (window.hvoltBridge && window.hvoltBridge.position) {
+          window.hvoltBridge.position(e.position.lineNumber, e.position.column);
+        }
+      });
+
+      editor.onDidChangeModelContent(function () {
+        if (loading) { return; }
+        dirty = true;
+        // Per-tab dirt: the strip needs to know which file diverged, not just that one did.
+        if (window.hvoltBridge && window.hvoltRel && window.hvoltBridge.dirty) {
+          window.hvoltBridge.dirty(window.hvoltRel, true);
+        }
+      });
+
+      // Ctrl/Cmd+S asks the host to write the buffer back to the staged file.
+      editor.addCommand(monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyS, function () {
+        if (window.hvoltBridge && window.hvoltBridge.save) {
+          window.hvoltBridge.save(editor.getValue());
+          dirty = false;
+          setStatus('saved');
+        }
+      });
+
+      if (window.__hvoltTheme !== undefined) {
+        monaco.editor.setTheme(window.__hvoltTheme ? 'vs-dark' : 'vs');
+      }
+      // The host cannot script the page from inside a bridge callback, so the first file is
+      // pulled here once that callback has returned.
+      setStatus('monaco ok');
+      if (window.hvoltBridge && window.hvoltBridge.ready) {
+        try {
+          var initial = window.hvoltBridge.ready();
+          if (initial) { window.hvoltSetText(initial, 'arkts'); }
+        } catch (e) {
+          setStatus('ready failed: ' + e);
+        }
+      }
+    });
+  </script>
+</body>
+</html>

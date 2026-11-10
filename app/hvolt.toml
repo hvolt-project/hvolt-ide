@@ -1,0 +1,29 @@
+[app]
+bundle = "xyz.sudofree.hvolt.ide"
+name = "hvolt IDE"
+version = "1.0.0"
+vendor = "sudofree"
+icon = "$media:layered_image"
+sdk_version = "26.0.0"
+compile_sdk_version = "26.0.0"
+compatible_sdk_version = "26.0.0"
+bundle_type = "app"
+products = ["default"]
+runtime_os = "HarmonyOS"
+members = ["src"]
+
+[app.signing.default]
+store_file = "signing/debug/debug.p12"
+store_password = "HvAExtU3Eruy6uoqfDwUaKEGo8bDfrgp"
+key_alias = "debugKey"
+key_password = "HvAExtU3Eruy6uoqfDwUaKEGo8bDfrgp"
+certpath = "signing/debug/debug.cer"
+profile = "signing/debug/debug.p7b"
+sign_alg = "SHA256withECDSA"
+
+[products]
+
+[dependencies.navi]
+path = "navi"
+
+[registries]

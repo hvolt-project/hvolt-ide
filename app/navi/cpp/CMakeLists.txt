@@ -1,0 +1,5 @@
+cmake_minimum_required(VERSION 3.5.0)
+project(navi)
+set(CMAKE_CXX_STANDARD 17)
+add_library(navi SHARED napi_init.cpp)
+target_link_libraries(navi PUBLIC libace_napi.z.so libhilog_ndk.z.so dl)
