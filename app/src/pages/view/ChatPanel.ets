@@ -374,12 +374,17 @@ export struct ChatPanel {
 
           if (this.asrActive) {
             Row({ space: 6 }) {
-              SymbolGlyph($r('sys.symbol.wave_1'))
+              SymbolGlyph($r('sys.symbol.mic_fill'))
                 .fontSize(16)
                 .fontColor([this.p().textSecondary])
-              Text('正在聆听…')
+              // Recognised words replace the prompt as they arrive, so the field is the
+              // transcript rather than a sign covering it.
+              Text(this.draft.length > 0 ? this.draft : '正在聆听…')
                 .fontSize(14)
-                .fontColor(this.p().textSecondary)
+                .fontColor(this.draft.length > 0 ? this.p().textPrimary : this.p().textSecondary)
+                .layoutWeight(1)
+                .maxLines(2)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
             }
             .layoutWeight(1)
             .height(36)
@@ -415,7 +420,7 @@ export struct ChatPanel {
           }
         }
         .layoutWeight(1)
-        .backgroundColor(this.asrActive ? '#E5484D14' : this.p().card)
+        .backgroundColor(this.asrActive ? 'rgba(229,72,77,0.08)' : this.p().card)
         .borderRadius(12)
         .padding({ left: 2, right: 6, top: 3, bottom: 3 })
 
