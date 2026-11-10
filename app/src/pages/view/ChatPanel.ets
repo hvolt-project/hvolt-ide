@@ -181,7 +181,11 @@ export struct ChatPanel {
       this.confirmClear();
       return;
     }
-    this.actions.send(text);
+    // Attachments belong to the message being sent; leaving them out here was what made
+    // `images` undefined and blew up in toWire.
+    const images = this.attachments;
+    this.attachments = [];
+    this.actions.send(text, images);
   }
 
   private confirmClear(): void {

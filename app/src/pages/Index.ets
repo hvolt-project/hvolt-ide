@@ -1,3 +1,4 @@
+import hilog from '@ohos.hilog';
 // Entry file: layout and the transient switches only. Everything the shell can do lives
 // in ./model/Session; the session publishes its fields to AppStorage and the panes
 // subscribe to them, so this file never threads data through intermediate props.
@@ -309,6 +310,7 @@ struct Index {
       this.chatBusy = false;
     }).catch((e: Error) => {
       this.chatBusy = false;
+      hilog.error(0x0000, 'hvoltide', 'chat turn failed: %{public}s', e.stack === undefined ? e.message : e.stack);
       this.appendChat('error', e.message);
     });
   }
