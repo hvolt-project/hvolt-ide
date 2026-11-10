@@ -13,6 +13,7 @@ import { registerEditTool } from './tools/Edit';
 import { registerBuildTools } from './tools/Build';
 import { registerDeployTool } from './tools/Deploy';
 import { registerLogTools } from './tools/Logs';
+import { registerDeviceTools } from './tools/Device';
 
 /** Port the loopback endpoint binds to; the built-in client uses the same number. */
 export const MCP_PORT: number = 8765;
@@ -93,7 +94,9 @@ async function selfCheck(port: number, projectDir: () => string): Promise<void> 
       call('write', 'write', { 'path': 'harness-probe.txt', 'content': 'a\nb\na' }),
       call('readback', 'read', { 'path': 'harness-probe.txt' }),
       call('editdup', 'edit', { 'path': 'harness-probe.txt', 'old_string': 'a', 'new_string': 'z' }),
-      call('log', 'read_log', { 'lines': 3 })
+      call('log', 'read_log', { 'lines': 3 }),
+      call('devices', 'devices', {}),
+      call('shellgate', 'shell', { 'command': 'echo hi' })
     ];
     for (const body of calls) {
       await client.send({ data: body + '\n' });
@@ -131,6 +134,7 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   registerBuildTools(registry, ctx);
   registerDeployTool(registry, ctx);
   registerLogTools(registry, ctx);
+  registerDeviceTools(registry, ctx);
   const server = new McpServer();
   server.start(registry, MCP_PORT).then(() => {
     running = server;
