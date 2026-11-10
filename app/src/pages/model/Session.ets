@@ -21,6 +21,7 @@ import fs from '@ohos.file.fs';
 import zlib from '@ohos.zlib';
 import { startHarness } from '../harness/Harness';
 import { ChatSession } from '../harness/loop/Loop';
+import { Usage } from '../harness/loop/Types';
 import { LlmConfig, loadLlmConfig } from '../harness/loop/Settings';
 import { buildSystemPrompt, runtimeBlock } from '../harness/Prompt';
 import { ProjectWatcher, WatchEvent } from '../harness/fs/Watch';
@@ -65,6 +66,22 @@ function firstLine(text: string): string {
   return lines.length > 0 ? lines[0].trim() : '';
 }
 
+
+/** One line at the end of a turn: what it cost and how long it took. */
+function statLine(usage: Usage, rounds: number, millis: number): string {
+  const parts: string[] = [];
+  parts.push((millis / 1000).toFixed(1) + 's');
+  if (usage.totalTokens > 0) {
+    parts.push('in ' + usage.promptTokens + ' · out ' + usage.completionTokens);
+    if (usage.reasoningTokens > 0) {
+      parts.push('思考 ' + usage.reasoningTokens);
+    }
+  }
+  if (rounds > 1) {
+    parts.push(rounds + ' 轮');
+  }
+  return parts.join(' · ');
+}
 
 export class Session {
   readonly controller: web_webview.WebviewController = new web_webview.WebviewController();
@@ -134,7 +151,7 @@ export class Session {
   chat: ChatSession = new ChatSession();
 
   private chatFile(name: string): string {
-    return this.filesDir() + '/projects/' + name + '/.hvolt/chat.jsonl.gz';
+    return this.filesDir() + '/projects/' + name + '/.hvolt/chat.jsonl';
   }
 
   private filesDir(): string {
@@ -142,58 +159,47 @@ export class Session {
   }
 
   /**
-   * Restores the project's conversation. The file is gzipped jsonl: a dump costs a fraction of
-   * the raw text, and gzip is the compressor the platform already ships.
+   * Restores the project's conversation from its jsonl file, one message per line.
+   *
+   * Compression is deliberately not part of this path: `zlib.compressFile` returned success
+   * without producing a file on this device, and a history that only loads when a compressor
+   * cooperates is worse than an uncompressed one that always loads.
    */
-  private async loadChat(name: string): Promise<void> {
-    const gz = this.chatFile(name);
+  private loadChat(name: string): void {
+    const path = this.chatFile(name);
     try {
-      if (!fs.accessSync(gz)) {
+      if (!fs.accessSync(path)) {
         return;
       }
-    } catch (e) {
-      return;
-    }
-    const raw = gz + '.raw';
-    try {
-      await zlib.decompressFile(gz, raw);
-      this.chat.load(fs.readTextSync(raw));
+      const text = fs.readTextSync(path);
+      this.chat.load(text);
+      const messages = this.chat.messages().length;
+      hilog.info(0x0000, 'hvoltide', 'chat restored: %{public}d messages', messages);
     } catch (e) {
       this.append('chat history load failed: ' + (e as Error).message);
-    } finally {
-      try {
-        fs.unlinkSync(raw);
-      } catch (e) {
-      }
     }
   }
 
-  private async saveChat(): Promise<void> {
+  private saveChat(): void {
     if (this.project.length === 0) {
       return;
     }
-    const gz = this.chatFile(this.project);
-    const raw = gz + '.raw';
+    const path = this.chatFile(this.project);
     try {
-      const dir = gz.substring(0, gz.lastIndexOf('/'));
+      const dir = path.substring(0, path.lastIndexOf('/'));
       if (!fs.accessSync(dir)) {
         fs.mkdirSync(dir, true);
       }
-      const file = fs.openSync(raw, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      const text = this.chat.dump();
+      const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
       try {
-        fs.writeSync(file.fd, this.chat.dump());
+        fs.writeSync(file.fd, text);
       } finally {
         fs.closeSync(file);
       }
-      await zlib.compressFile(raw, gz);
-      hilog.info(0x0000, 'hvoltide', 'chat saved: %{public}d bytes gz', fs.statSync(gz).size);
+      hilog.info(0x0000, 'hvoltide', 'chat saved: %{public}d bytes', text.length);
     } catch (e) {
       this.append('chat history save failed: ' + (e as Error).message);
-    } finally {
-      try {
-        fs.unlinkSync(raw);
-      } catch (e) {
-      }
     }
   }
 
@@ -231,11 +237,14 @@ export class Session {
       onError: (message: string) => {
         onEvent('error', message);
       },
+      onStats: (usage, rounds: number, millis: number) => {
+        onEvent('stats', statLine(usage, rounds, millis));
+      },
       onDone: () => {
         onEvent('done', '');
       }
     });
-    await this.saveChat();
+    this.saveChat();
   }
 
   chatStop(): void {
@@ -600,8 +609,7 @@ export class Session {
     this.watcher.start(this.dir(), (events: WatchEvent[]) => {
       this.onTreeChanged(events);
     });
-    this.loadChat(name).catch(() => {
-    });
+    this.loadChat(name);
     readPref('tabs.' + name, '[]').then((raw: string) => {
       if (this.project !== name) {
         return;

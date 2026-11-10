@@ -5,7 +5,7 @@
 import { palette, Palette } from '../model/Palette';
 import { MarkdownView } from './MarkdownView';
 
-export type ChatKind = 'user' | 'assistant' | 'tool' | 'error' | 'thought';
+export type ChatKind = 'user' | 'assistant' | 'tool' | 'error' | 'thought' | 'stats';
 
 export interface ChatLine {
   kind: ChatKind;
@@ -115,6 +115,12 @@ export struct ChatPanel {
         .width('100%')
         .maxLines(2)
         .textOverflow({ overflow: TextOverflow.Ellipsis })
+    } else if (line.kind === 'stats') {
+      Text(line.text)
+        .fontSize(11)
+        .fontColor(this.p().textTertiary)
+        .width('100%')
+        .padding({ top: 2 })
     } else if (line.kind === 'error') {
       Text(line.text)
         .fontSize(13)

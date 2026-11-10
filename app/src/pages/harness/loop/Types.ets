@@ -14,6 +14,17 @@ export interface ChatMessage {
   toolCallId: string;
 }
 
+export interface Usage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  reasoningTokens: number;
+}
+
+export function emptyUsage(): Usage {
+  return { promptTokens: 0, completionTokens: 0, totalTokens: 0, reasoningTokens: 0 };
+}
+
 export interface ToolCall {
   id: string;
   name: string;

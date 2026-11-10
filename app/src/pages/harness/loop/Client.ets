@@ -6,7 +6,7 @@
 import http from '@ohos.net.http';
 import util from '@ohos.util';
 import { TOOLS } from '../mcp/Registry';
-import { ChatMessage, ToolCall } from './Types';
+import { ChatMessage, ToolCall, Usage } from './Types';
 import { LlmConfig } from './Settings';
 import { chatUrl } from './Models';
 
@@ -15,6 +15,8 @@ export interface StreamSink {
   /** Reasoning deltas, when the model emits them (reasoning_content or reasoning). */
   onThought?: (delta: string) => void;
   onToolCall: (call: ToolCall) => void;
+  /** Token usage for this request, when the endpoint reports it. */
+  onUsage?: (usage: Usage) => void;
   onDone: () => void;
   onError: (message: string) => void;
 }
@@ -74,6 +76,17 @@ function applyDelta(payload: string, text: string[], calls: Map<number, ToolCall
   } catch (e) {
     return text.join('');
   }
+  const reported = parsed['usage'] as Record<string, Object>;
+  if (reported !== undefined && reported !== null && sink.onUsage !== undefined) {
+    const details = reported['completion_tokens_details'] as Record<string, Object>;
+    sink.onUsage({
+      promptTokens: reported['prompt_tokens'] === undefined ? 0 : reported['prompt_tokens'] as number,
+      completionTokens: reported['completion_tokens'] === undefined ? 0 : reported['completion_tokens'] as number,
+      totalTokens: reported['total_tokens'] === undefined ? 0 : reported['total_tokens'] as number,
+      reasoningTokens: details === undefined ? 0 :
+        (details['reasoning_tokens'] === undefined ? 0 : details['reasoning_tokens'] as number)
+    });
+  }
   const choices = parsed['choices'] as Object[];
   if (choices === undefined || choices.length === 0) {
     return text.join('');
@@ -85,7 +98,10 @@ function applyDelta(payload: string, text: string[], calls: Map<number, ToolCall
   }
   const thought = delta['reasoning_content'] !== undefined ? delta['reasoning_content'] : delta['reasoning'];
   if (thought !== undefined && thought !== null && sink.onThought !== undefined) {
-    sink.onThought(thought as string);
+    const piece = thought as string;
+    if (piece.length > 0) {
+      sink.onThought(piece);
+    }
   }
   const content = delta['content'];
   if (content !== undefined && content !== null) {
@@ -130,7 +146,9 @@ export async function streamChat(config: LlmConfig, messages: ChatMessage[], sin
     'model': config.model,
     'messages': toWire(messages),
     'tools': toolSchema(),
-    'stream': true
+    'stream': true,
+    // Without this the streaming response carries no usage block at all.
+    'stream_options': { 'include_usage': true }
   };
   // Only sent when chosen: an endpoint that does not know the field should not choke on it.
   if (config.effort.length > 0) {
@@ -147,7 +165,9 @@ export async function streamChat(config: LlmConfig, messages: ChatMessage[], sin
     if (abort.cancelled) {
       return;
     }
-    carry += decoder.decodeToString(new Uint8Array(chunk));
+    // Stream decoding: a multi-byte character can straddle two chunks, and decoding each
+    // chunk on its own would corrupt it.
+    carry += decoder.decodeWithStream(new Uint8Array(chunk), { stream: true });
     let cut = carry.indexOf('\n');
     while (cut >= 0) {
       const line = carry.substring(0, cut).trim();

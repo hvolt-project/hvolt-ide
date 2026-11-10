@@ -7,11 +7,13 @@
 import { TOOLS, ToolSpec } from '../mcp/Registry';
 import { AbortFlag, streamChat } from './Client';
 import { LlmConfig } from './Settings';
-import { ChatMessage, Role, ToolCall, assistantMessage, toolMessage, userMessage } from './Types';
+import { ChatMessage, Role, ToolCall, Usage, assistantMessage, emptyUsage, toolMessage, userMessage } from './Types';
 
 export interface LoopSink {
   onText: (delta: string) => void;
   onThought: (delta: string) => void;
+  /** Reported once per turn: totals across tool rounds plus how long it took. */
+  onStats: (usage: Usage, rounds: number, millis: number) => void;
   onToolStart: (call: ToolCall) => void;
   onToolResult: (callId: string, text: string) => void;
   onError: (message: string) => void;
@@ -70,6 +72,9 @@ export class ChatSession {
     this.history.push(userMessage(userText));
     this.running = true;
     this.abort = new AbortFlag();
+    const startedAt = Date.now();
+    let total: Usage = emptyUsage();
+    let rounds = 0;
 
     try {
       for (let round = 0; round < MAX_ROUNDS; round++) {
@@ -93,6 +98,12 @@ export class ChatSession {
           onToolCall: (call: ToolCall) => {
             calls.push(call);
           },
+          onUsage: (usage: Usage) => {
+            total.promptTokens += usage.promptTokens;
+            total.completionTokens += usage.completionTokens;
+            total.totalTokens += usage.totalTokens;
+            total.reasoningTokens += usage.reasoningTokens;
+          },
           onDone: () => {
           },
           onError: (message: string) => {
@@ -109,6 +120,7 @@ export class ChatSession {
         if (calls.length === 0) {
           break;
         }
+        rounds++;
         for (const call of calls) {
           if (this.abort.cancelled) {
             break;
@@ -120,7 +132,9 @@ export class ChatSession {
         }
       }
     } finally {
+      rounds = Math.max(rounds, 1);
       this.running = false;
+      sink.onStats(total, rounds, Date.now() - startedAt);
       sink.onDone();
     }
   }

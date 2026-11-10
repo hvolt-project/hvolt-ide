@@ -122,6 +122,7 @@ struct Index {
     }
     this.session.onChange = () => {
       this.publish();
+      this.syncChatFromHistory();
     };
     setChatHandler(() => {
       animateTo({ duration: DURATION, curve: spring() }, () => {
@@ -221,8 +222,33 @@ struct Index {
       lines.push({ kind: 'tool', text: text, open: true });
     } else if (kind === 'error') {
       lines.push({ kind: 'error', text: text, open: true });
+    } else if (kind === 'stats') {
+      lines.push({ kind: 'stats', text: text, open: true });
     } else if (kind === 'user') {
       lines.push({ kind: 'user', text: text, open: true });
+    }
+    this.chatLines = lines;
+  }
+
+  /** Rebuilds the transcript from the session history, e.g. after a restore or a project switch. */
+  private syncChatFromHistory(): void {
+    const lines: ChatLine[] = [];
+    for (const message of this.session.chat.messages()) {
+      if (message.role === 'system') {
+        continue;
+      }
+      if (message.role === 'user') {
+        lines.push({ kind: 'user', text: message.content, open: true });
+      } else if (message.role === 'assistant') {
+        if (message.reasoning.length > 0) {
+          lines.push({ kind: 'thought', text: message.reasoning, open: false });
+        }
+        if (message.content.length > 0) {
+          lines.push({ kind: 'assistant', text: message.content, open: true });
+        }
+      } else if (message.role === 'tool') {
+        lines.push({ kind: 'tool', text: message.content, open: true });
+      }
     }
     this.chatLines = lines;
   }
