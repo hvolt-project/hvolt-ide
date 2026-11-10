@@ -221,6 +221,44 @@
       if (window.__hvoltTheme !== undefined) {
         monaco.editor.setTheme(window.__hvoltTheme ? 'vs-dark' : 'vs');
       }
+
+      // Swipe left with three (or four) fingers flips the editor to the chat page, the way a page
+      // turns; swiping right on the chat page turns back. The WebView
+      // consumes multi-touch before ArkUI sees it, so the gesture has to be recognised here.
+      (function () {
+        var startX = null;
+        var startY = null;
+        var fired = false;
+        function report(text) {
+          if (window.hvoltBridge && window.hvoltBridge.log) {
+            window.hvoltBridge.log(text);
+          }
+        }
+        report('chat armed; bridge=' + (window.hvoltBridge ? Object.keys(window.hvoltBridge).join(',') : 'none'));
+        document.addEventListener('touchstart', function (e) {
+          if (e.touches.length >= 3) {
+            startX = e.touches[0].clientX;
+            startY = e.touches[0].clientY;
+            fired = false;
+          } else {
+            startX = null;
+          }
+        }, { passive: true, capture: true });
+        document.addEventListener('touchmove', function (e) {
+          if (startX === null || fired) {
+            return;
+          }
+          var dx = e.touches[0].clientX - startX;
+          var dy = Math.abs(e.touches[0].clientY - startY);
+          if (dx < -60 && dy < 120) {
+            fired = true;
+            report('swipe fired dx=' + dx);
+            if (window.hvoltBridge && window.hvoltBridge.openChat) {
+              window.hvoltBridge.openChat();
+            }
+          }
+        }, { passive: true, capture: true });
+      })();
       // The host cannot script the page from inside a bridge callback, so the first file is
       // pulled here once that callback has returned.
       setStatus('monaco ok');

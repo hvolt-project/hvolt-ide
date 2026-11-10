@@ -13,6 +13,8 @@ import { TopBar } from './view/TopBar';
 import { ActivityBar } from './view/ActivityBar';
 import { LeftPane } from './view/SidePanes';
 import { BottomDock } from './view/BottomDock';
+import { ChatPanel, ChatLine } from './view/ChatPanel';
+import { setChatHandler } from './model/Bridge';
 import { EditorArea } from './view/EditorArea';
 import { SettingsSheet } from './view/SettingsSheet';
 
@@ -26,6 +28,9 @@ struct Index {
   @State leftOpen: boolean = false;
   @State rightOpen: boolean = false;
   @State panelOpen: boolean = false;
+  @State chatOpen: boolean = false;
+  @State chatBusy: boolean = false;
+  @State chatLines: ChatLine[] = [];
   @State panelTab: number = 0;
   @State showSettings: boolean = false;
   @State dark: boolean = true;
@@ -118,6 +123,11 @@ struct Index {
     this.session.onChange = () => {
       this.publish();
     };
+    setChatHandler(() => {
+      animateTo({ duration: DURATION, curve: spring() }, () => {
+        this.chatOpen = true;
+      });
+    });
     this.session.start(() => {
       this.publish();
     });
@@ -180,6 +190,47 @@ struct Index {
         this.rightOpen = false;
         this.panelOpen = false;
       }
+    });
+  }
+
+  private appendChat(kind: string, text: string): void {
+    const lines: ChatLine[] = this.chatLines.slice();
+    if (kind === 'text') {
+      const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
+      if (last !== undefined && last.kind === 'assistant') {
+        lines[lines.length - 1] = { kind: 'assistant', text: last.text + text };
+        this.chatLines = lines;
+        return;
+      }
+      lines.push({ kind: 'assistant', text: text });
+      this.chatLines = lines;
+      return;
+    }
+    if (kind === 'tool') {
+      lines.push({ kind: 'tool', text: text });
+    } else if (kind === 'result') {
+      lines.push({ kind: 'tool', text: text });
+    } else if (kind === 'error') {
+      lines.push({ kind: 'error', text: text });
+    } else if (kind === 'user') {
+      lines.push({ kind: 'user', text: text });
+    }
+    this.chatLines = lines;
+  }
+
+  private sendChat(text: string): void {
+    this.appendChat('user', text);
+    this.chatBusy = true;
+    this.session.chatSend(text, (kind: string, body: string) => {
+      this.appendChat(kind, kind === 'tool' ? '调用 ' + body : body);
+      if (kind === 'done') {
+        this.chatBusy = false;
+      }
+    }).then(() => {
+      this.chatBusy = false;
+    }).catch((e: Error) => {
+      this.chatBusy = false;
+      this.appendChat('error', e.message);
     });
   }
 
@@ -582,6 +633,33 @@ struct Index {
           .height('100%')
           .backgroundColor(this.p().bg)
         }
+
+      // The chat surface covers everything, including the AGC sheet: it is a mode, not a pane.
+      if (this.chatOpen) {
+        ChatPanel({
+          dark: this.isDark(),
+          lines: $chatLines,
+          busy: $chatBusy,
+          actions: {
+            send: (text: string) => {
+              this.sendChat(text);
+            },
+            stop: () => {
+              this.session.chatStop();
+            },
+            reset: () => {
+              this.session.chatReset();
+              this.chatLines = [];
+            },
+            close: () => {
+              animateTo({ duration: DURATION, curve: spring() }, () => {
+                this.chatOpen = false;
+              });
+            }
+          }
+        })
+          .transition(TransitionEffect.translate({ x: '100%' }).animation({ duration: 220, curve: Curve.EaseOut }))
+      }
     }
     .width('100%')
     .height(this.frame())

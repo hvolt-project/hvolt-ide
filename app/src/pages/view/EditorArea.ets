@@ -299,7 +299,7 @@ export struct EditorArea {
           .javaScriptProxy({
             object: this.bridge,
             name: 'hvoltBridge',
-            methodList: ['save', 'ready', 'dirty', 'position', 'chromeHidden'],
+            methodList: ['save', 'ready', 'dirty', 'position', 'chromeHidden', 'openChat', 'log'],
             controller: this.controller
           })
       }

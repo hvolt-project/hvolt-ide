@@ -19,6 +19,9 @@ import {
 } from './Project';
 import fs from '@ohos.file.fs';
 import { startHarness } from '../harness/Harness';
+import { ChatSession } from '../harness/loop/Loop';
+import { LlmConfig, loadLlmConfig } from '../harness/loop/Settings';
+import { buildSystemPrompt } from '../harness/Prompt';
 import hilog from '@ohos.hilog';
 import { readPref, writePref } from './Prefs';
 import { connectAsync, hvoltAsync, streamNextAsync } from './Connect';
@@ -121,6 +124,51 @@ export class Session {
   /** Absolute sandbox path of the open project, for the harness tools. */
   projectPath(): string {
     return this.dir();
+  }
+
+  /** One conversation per app session; I11 persists it across restarts. */
+  chat: ChatSession = new ChatSession();
+
+  /** Runs one chat turn, reporting each event to the caller for rendering. */
+  async chatSend(userText: string,
+    onEvent: (kind: string, text: string) => void): Promise<void> {
+    const config: LlmConfig = await loadLlmConfig();
+    if (!config.ready()) {
+      onEvent('error', '先在设置里填模型地址、模型名与密钥');
+      return;
+    }
+    const prompt = await buildSystemPrompt({
+      projectName: this.project,
+      currentFile: this.current,
+      deviceAddress: this.device,
+      connected: this.link === 2
+    });
+    this.chat.setSystem(prompt);
+    await this.chat.send(config, userText, {
+      onText: (delta: string) => {
+        onEvent('text', delta);
+      },
+      onToolStart: (call) => {
+        onEvent('tool', call.name + ' ' + call.argumentsJson);
+      },
+      onToolResult: (id: string, text: string) => {
+        onEvent('result', text);
+      },
+      onError: (message: string) => {
+        onEvent('error', message);
+      },
+      onDone: () => {
+        onEvent('done', '');
+      }
+    });
+  }
+
+  chatStop(): void {
+    this.chat.stop();
+  }
+
+  chatReset(): void {
+    this.chat.reset();
   }
 
   private dir(): string {

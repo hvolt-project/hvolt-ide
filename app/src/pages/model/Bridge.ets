@@ -1,3 +1,5 @@
+import hilog from '@ohos.hilog';
+
 // The page calls into this object through NAPI. Only plain methods live on it: handler
 // fields are kept module-level, because a proxy object carrying function-valued properties
 // is what took the app down on this device.
@@ -11,6 +13,13 @@ let posHandler: (line: number, col: number) => void = () => {
 };
 let chromeHandler: (hidden: boolean) => void = () => {
 };
+let chatHandler: () => void = () => {
+};
+
+/** The page asks for the chat surface by gesture; the shell decides what that means. */
+export function setChatHandler(handler: () => void): void {
+  chatHandler = handler;
+}
 
 export function setEditorHandlers(
   onReady: (initial: string) => void,
@@ -55,6 +64,17 @@ export class EditorBridge {
 
   chromeHidden(hidden: boolean): void {
     chromeHandler(hidden);
+  }
+
+  // Three- or four-finger swipe to the right in the editor.
+  openChat(): void {
+    chatHandler();
+  }
+
+  // Diagnostics from the page. console.log does not reach hilog here, so the page reports
+  // through this instead of silently failing.
+  log(text: string): void {
+    hilog.info(0x0000, 'hvoltide', 'web: %{public}s', text);
   }
 }
 
