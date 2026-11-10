@@ -132,6 +132,46 @@ export class Session {
   /** One conversation per app session; I11 persists it across restarts. */
   chat: ChatSession = new ChatSession();
 
+  private chatFile(name: string): string {
+    return this.filesDir() + '/projects/' + name + '/.hvolt/chat.json';
+  }
+
+  private filesDir(): string {
+    return getContext().filesDir;
+  }
+
+  /** Restores the project's conversation; a missing or unreadable file just means none. */
+  private loadChat(name: string): void {
+    const path = this.chatFile(name);
+    try {
+      if (fs.accessSync(path)) {
+        this.chat.load(fs.readTextSync(path));
+      }
+    } catch (e) {
+    }
+  }
+
+  private saveChat(): void {
+    if (this.project.length === 0) {
+      return;
+    }
+    const path = this.chatFile(this.project);
+    try {
+      const dir = path.substring(0, path.lastIndexOf('/'));
+      if (!fs.accessSync(dir)) {
+        fs.mkdirSync(dir, true);
+      }
+      const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      try {
+        fs.writeSync(file.fd, this.chat.dump());
+      } finally {
+        fs.closeSync(file);
+      }
+    } catch (e) {
+      this.append('chat history save failed: ' + (e as Error).message);
+    }
+  }
+
   /** Runs one chat turn, reporting each event to the caller for rendering. */
   async chatSend(userText: string,
     onEvent: (kind: string, text: string) => void): Promise<void> {
@@ -164,6 +204,7 @@ export class Session {
         onEvent('done', '');
       }
     });
+    this.saveChat();
   }
 
   chatStop(): void {
@@ -518,6 +559,7 @@ export class Session {
     this.watcher.start(this.dir(), (events: WatchEvent[]) => {
       this.onTreeChanged(events);
     });
+    this.loadChat(name);
     readPref('tabs.' + name, '[]').then((raw: string) => {
       if (this.project !== name) {
         return;

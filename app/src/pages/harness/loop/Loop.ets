@@ -7,7 +7,7 @@
 import { TOOLS, ToolSpec } from '../mcp/Registry';
 import { AbortFlag, streamChat } from './Client';
 import { LlmConfig } from './Settings';
-import { ChatMessage, ToolCall, assistantMessage, toolMessage, userMessage } from './Types';
+import { ChatMessage, Role, ToolCall, assistantMessage, toolMessage, userMessage } from './Types';
 
 export interface LoopSink {
   onText: (delta: string) => void;
@@ -116,6 +116,69 @@ export class ChatSession {
     } finally {
       this.running = false;
       sink.onDone();
+    }
+  }
+
+  /** Serialises the conversation without the system prompt, which is rebuilt on load. */
+  dump(): string {
+    const rows: Object[] = [];
+    for (const message of this.history) {
+      if (message.role === 'system') {
+        continue;
+      }
+      const calls: Object[] = [];
+      for (const call of message.toolCalls) {
+        calls.push({
+          'id': call.id, 'name': call.name, 'arguments': call.argumentsJson
+        });
+      }
+      rows.push({
+        'role': message.role,
+        'content': message.content,
+        'calls': calls,
+        'callId': message.toolCallId
+      });
+    }
+    return JSON.stringify(rows);
+  }
+
+  /** Restores a dumped conversation; a corrupt dump is dropped rather than half-loaded. */
+  load(text: string): void {
+    const kept: ChatMessage[] = this.history.filter((m: ChatMessage) => m.role === 'system');
+    this.history = kept;
+    if (text.trim().length === 0) {
+      return;
+    }
+    let parsed: Object[];
+    try {
+      parsed = JSON.parse(text) as Object[];
+    } catch (e) {
+      return;
+    }
+    if (parsed === undefined || parsed === null) {
+      return;
+    }
+    for (const raw of parsed) {
+      const row = raw as Record<string, Object>;
+      const role = row['role'] as string;
+      const calls: ToolCall[] = [];
+      const rawCalls = row['calls'] as Object[];
+      if (rawCalls !== undefined) {
+        for (const entry of rawCalls) {
+          const call = entry as Record<string, Object>;
+          calls.push({
+            id: call['id'] as string,
+            name: call['name'] as string,
+            argumentsJson: call['arguments'] as string
+          });
+        }
+      }
+      this.history.push({
+        role: role as Role,
+        content: row['content'] as string,
+        toolCalls: calls,
+        toolCallId: row['callId'] === undefined ? '' : row['callId'] as string
+      });
     }
   }
 
