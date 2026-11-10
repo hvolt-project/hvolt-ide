@@ -22,6 +22,7 @@ import { startHarness } from '../harness/Harness';
 import { ChatSession } from '../harness/loop/Loop';
 import { LlmConfig, loadLlmConfig } from '../harness/loop/Settings';
 import { buildSystemPrompt } from '../harness/Prompt';
+import { ProjectWatcher, WatchEvent } from '../harness/fs/Watch';
 import hilog from '@ohos.hilog';
 import { readPref, writePref } from './Prefs';
 import { connectAsync, hvoltAsync, streamNextAsync } from './Connect';
@@ -125,6 +126,8 @@ export class Session {
   projectPath(): string {
     return this.dir();
   }
+
+  private watcher: ProjectWatcher = new ProjectWatcher();
 
   /** One conversation per app session; I11 persists it across restarts. */
   chat: ChatSession = new ChatSession();
@@ -475,6 +478,31 @@ export class Session {
     });
   }
 
+  /** Re-reads the tree and reopens the current file when someone else changed it. */
+  private onTreeChanged(events: WatchEvent[]): void {
+    const live: string[] = [];
+    listSources(this.dir(), '', live);
+    this.files = live;
+    this.sourceCount = live.length;
+    let touchedCurrent = false;
+    for (const event of events) {
+      if (event.removed) {
+        touchedCurrent = true;
+      }
+      if (this.current.length > 0 && event.path.endsWith('/' + this.current)) {
+        touchedCurrent = true;
+      }
+    }
+    if (touchedCurrent) {
+      this.append('工程文件已变化 · ' + events.length + ' 处');
+      this.onChange();
+    }
+  }
+
+  stopWatching(): void {
+    this.watcher.stop();
+  }
+
   openProject(name: string): void {
     this.project = name;
     writePref('project', name);
@@ -486,6 +514,10 @@ export class Session {
     this.statusText = '工程 ' + name;
     this.statusTone = 0;
     this.append('open project ' + name + ' · ' + this.sourceCount + ' 源文件');
+    // Outside writers (the assistant, a build) change the tree behind the editor's back.
+    this.watcher.start(this.dir(), (events: WatchEvent[]) => {
+      this.onTreeChanged(events);
+    });
     readPref('tabs.' + name, '[]').then((raw: string) => {
       if (this.project !== name) {
         return;

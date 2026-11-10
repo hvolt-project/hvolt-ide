@@ -14,6 +14,7 @@ import { registerBuildTools } from './tools/Build';
 import { registerDeployTool } from './tools/Deploy';
 import { registerLogTools } from './tools/Logs';
 import { registerDeviceTools } from './tools/Device';
+import { registerSdkTools } from './tools/Sdk';
 import { installApprovalGate } from './Approval';
 import { buildSystemPrompt } from './Prompt';
 
@@ -98,7 +99,8 @@ async function selfCheck(port: number, projectDir: () => string): Promise<void> 
       call('editdup', 'edit', { 'path': 'harness-probe.txt', 'old_string': 'a', 'new_string': 'z' }),
       call('log', 'read_log', { 'lines': 3 }),
       call('devices', 'devices', {}),
-      call('shellgate', 'shell', { 'command': 'echo hi' })
+      call('shellgate', 'shell', { 'command': 'echo hi' }),
+      call('sdk', 'sdk_search', { 'query': 'createWatcher', 'limit': 2 })
     ];
     for (const body of calls) {
       await client.send({ data: body + '\n' });
@@ -138,6 +140,7 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   registerDeployTool(registry, ctx);
   registerLogTools(registry, ctx);
   registerDeviceTools(registry, ctx);
+  registerSdkTools(registry);
   // Reported once at startup: proves the shipped prompt file is readable from the bundle.
   buildSystemPrompt({
     projectName: '', currentFile: '', deviceAddress: '', connected: false
