@@ -9,6 +9,8 @@ import util from '@ohos.util';
 import { ToolRegistry } from '../mcp/Registry';
 
 const INDEX_FILE: string = 'sdk/index.tsv';
+const API_DIR: string = 'sdk/api/';
+const MAX_LINES: number = 120;
 const DEFAULT_LIMIT: number = 10;
 const MAX_LIMIT: number = 40;
 
@@ -100,6 +102,56 @@ export function registerSdkTools(registry: ToolRegistry): void {
         out.push(format(row));
       }
       return out.join('\n\n');
+    }
+  });
+
+  registry.register({
+    name: 'sdk_read',
+    description: 'Read a slice of an SDK declaration file around a line, for full comments and ' +
+      'neighbouring declarations. Use the file:line that sdk_search returned.',
+    inputSchema: {
+      'type': 'object',
+      'properties': {
+        'file': { 'type': 'string', 'description': 'Declaration file path, as reported by sdk_search.' },
+        'line': { 'type': 'number', 'description': 'Line to centre the slice on.' },
+        'lines': { 'type': 'number', 'description': 'How many lines to return (default 40, max 120).' }
+      },
+      'required': ['file', 'line']
+    },
+    approval: 'none',
+    handler: async (args: Record<string, Object>): Promise<string> => {
+      const file = (args['file'] as string).trim();
+      if (file.length === 0 || file.indexOf('..') >= 0) {
+        throw new Error('file must name a declaration file inside the SDK');
+      }
+      const centre = args['line'] as number;
+      const wanted = args['lines'] === undefined ? 40 : args['lines'] as number;
+      const span = wanted <= 0 ? 40 : (wanted > MAX_LINES ? MAX_LINES : wanted);
+      const rm = getContext().resourceManager;
+      let bytes: Uint8Array;
+      try {
+        bytes = await rm.getRawFileContent(API_DIR + file);
+      } catch (e) {
+        throw new Error('no such declaration file: ' + file);
+      }
+      const decoder = util.TextDecoder.create('utf-8');
+      const all: string[] = decoder.decodeToString(bytes).split('\n');
+      const half = Math.floor(span / 2);
+      let start = centre - half;
+      if (start < 1) {
+        start = 1;
+      }
+      let end = start + span - 1;
+      if (end > all.length) {
+        end = all.length;
+        start = end - span + 1 < 1 ? 1 : end - span + 1;
+      }
+      const out: string[] = [];
+      out.push(file + ':' + start + '-' + end + ' of ' + all.length);
+      for (let n = start; n <= end; n++) {
+        out.push(n + '\t' + all[n - 1]);
+      }
+      return out.join('\n');
     }
   });
 }

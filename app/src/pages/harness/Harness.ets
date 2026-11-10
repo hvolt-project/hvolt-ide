@@ -100,7 +100,8 @@ async function selfCheck(port: number, projectDir: () => string): Promise<void> 
       call('log', 'read_log', { 'lines': 3 }),
       call('devices', 'devices', {}),
       call('shellgate', 'shell', { 'command': 'echo hi' }),
-      call('sdk', 'sdk_search', { 'query': 'createWatcher', 'limit': 2 })
+      call('sdk', 'sdk_search', { 'query': 'createWatcher', 'limit': 2 }),
+      call('sdkread', 'sdk_read', { 'file': '@ohos.file.fs.d.ts', 'line': 1291, 'lines': 6 })
     ];
     for (const body of calls) {
       await client.send({ data: body + '\n' });
