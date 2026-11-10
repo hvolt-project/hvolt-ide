@@ -6,6 +6,8 @@ import { connectAsync } from '../model/Connect';
 import { FILES } from '../model/Stage';
 import fs from '@ohos.file.fs';
 import { HvoltResult } from '../model/Hvolt';
+import { LlmConfig, loadLlmConfig, saveLlmConfig } from '../harness/loop/Settings';
+import { loadExtraInstructions, saveExtraInstructions } from '../harness/Prompt';
 import {
   FONT_SIZES, KEY_AUTOCONNECT, KEY_AUTOSAVE, KEY_FONT, KEY_LINES, KEY_OBFUSCATE, KEY_TAB,
   KEY_SAVE_ON_SWITCH, KEY_TAIL, KEY_WRAP, TAILS, TAB_SIZES, readObfuscation, setObfuscation
@@ -66,6 +68,10 @@ export struct SettingsSheet {
   // Plain state, filled from AppStorage when the sheet appears: a @StorageProp getter
   // for a key that is not in the store yet takes the whole page down on this device.
   @State private appearance: number = 0;
+  @State private llmBase: string = '';
+  @State private llmModel: string = '';
+  @State private llmToken: string = '';
+  @State private extraPrompt: string = '';
   @State private autoDeploy: string = '0';
   @State private fontPx: number = 14;
   @State private lineNumbers: string = '1';
@@ -100,6 +106,7 @@ export struct SettingsSheet {
   }
 
   aboutToAppear(): void {
+    this.loadHarnessSettings();
     this.deviceDraft = this.device;
     this.devFeedback = this.linkState;
     this.appearance = AppStorage.get<number>('appearance') ?? 0;
@@ -202,6 +209,45 @@ export struct SettingsSheet {
       stamp = '';
     }
     return (unpacked ? '已解包' : '未解包') + ' · 版本 ' + (stamp.length === 0 ? '未知' : stamp);
+  }
+
+  private persistLlm(): void {
+    const config = new LlmConfig();
+    config.baseUrl = this.llmBase;
+    config.model = this.llmModel;
+    config.token = this.llmToken;
+    saveLlmConfig(config);
+  }
+
+  private loadHarnessSettings(): void {
+    loadLlmConfig().then((config: LlmConfig) => {
+      this.llmBase = config.baseUrl;
+      this.llmModel = config.model;
+      this.llmToken = config.token;
+    });
+    loadExtraInstructions().then((text: string) => {
+      this.extraPrompt = text;
+    });
+  }
+
+  @Builder
+  TextRow(title: string, value: string, placeholder: string, onChange: (v: string) => void) {
+    Column({ space: 6 }) {
+      Text(title).fontSize(15).fontColor(this.p().textPrimary).width('100%')
+      TextInput({ text: value, placeholder: placeholder })
+        .height(40)
+        .width('100%')
+        .fontSize(14)
+        .fontColor(this.p().textPrimary)
+        .placeholderColor(this.p().textTertiary)
+        .backgroundColor(this.p().card)
+        .borderRadius(12)
+        .padding({ left: 12, right: 12 })
+        .onChange((v: string) => {
+          onChange(v);
+        })
+    }
+    .width('100%')
   }
 
   @Builder
@@ -334,6 +380,24 @@ export struct SettingsSheet {
 
       Scroll() {
         Column({ space: 8 }) {
+          this.Section('模型接入')
+          this.TextRow('地址', this.llmBase, 'OpenAI 兼容 base URL', (v: string) => {
+            this.llmBase = v;
+            this.persistLlm();
+          })
+          this.TextRow('模型', this.llmModel, '模型名', (v: string) => {
+            this.llmModel = v;
+            this.persistLlm();
+          })
+          this.TextRow('密钥', this.llmToken, 'API key', (v: string) => {
+            this.llmToken = v;
+            this.persistLlm();
+          })
+          this.TextRow('附加指令', this.extraPrompt, '追加到系统提示末尾', (v: string) => {
+            this.extraPrompt = v;
+            saveExtraInstructions(v);
+          })
+
           this.Section('SDK')
           this.StatusRow('内置 SDK 目录', this.sdkState())
 

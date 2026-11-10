@@ -15,6 +15,7 @@ import { registerDeployTool } from './tools/Deploy';
 import { registerLogTools } from './tools/Logs';
 import { registerDeviceTools } from './tools/Device';
 import { installApprovalGate } from './Approval';
+import { buildSystemPrompt } from './Prompt';
 
 /** Port the loopback endpoint binds to; the built-in client uses the same number. */
 export const MCP_PORT: number = 8765;
@@ -137,6 +138,13 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   registerDeployTool(registry, ctx);
   registerLogTools(registry, ctx);
   registerDeviceTools(registry, ctx);
+  // Reported once at startup: proves the shipped prompt file is readable from the bundle.
+  buildSystemPrompt({
+    projectName: '', currentFile: '', deviceAddress: '', connected: false
+  }).then((text: string) => {
+    hilog.info(0x0000, 'hvoltide', 'system prompt: %{public}d chars', text.length);
+  }).catch(() => {
+  });
   installApprovalGate();
   const server = new McpServer();
   server.start(registry, MCP_PORT).then(() => {
