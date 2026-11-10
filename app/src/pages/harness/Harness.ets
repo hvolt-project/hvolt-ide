@@ -6,6 +6,7 @@ import socket from '@ohos.net.socket';
 import util from '@ohos.util';
 import { McpServer } from './mcp/Server';
 import { TOOLS, ToolRegistry } from './mcp/Registry';
+import { FileContext, registerFileTools } from './tools/Files';
 
 /** Port the loopback endpoint binds to; the built-in client uses the same number. */
 export const MCP_PORT: number = 8765;
@@ -37,12 +38,20 @@ async function selfCheck(port: number): Promise<void> {
   const decoder = util.TextDecoder.create('utf-8');
   const inbox: string[] = [];
 
+  // One datagram may carry several replies: split on newlines so the count matches requests.
   client.on('message', (info: socket.SocketMessageInfo) => {
-    inbox.push(decoder.decodeToString(new Uint8Array(info.message)).trim());
+    const text = decoder.decodeToString(new Uint8Array(info.message));
+    for (const line of text.split('\n')) {
+      const trimmed = line.trim();
+      if (trimmed.length > 0) {
+        inbox.push(trimmed);
+      }
+    }
   });
 
   const waitFor = async (count: number): Promise<string[]> => {
-    while (inbox.length < count) {
+    const deadline = Date.now() + 3000;
+    while (inbox.length < count && Date.now() < deadline) {
       await new Promise<void>((resolve) => {
         setTimeout(resolve, 20);
       });
@@ -55,16 +64,19 @@ async function selfCheck(port: number): Promise<void> {
       address: { address: '127.0.0.1', port: port, family: 1 }
     };
     await client.connect(target);
+    const call = (id: string, name: string, args: Record<string, Object>): string => {
+      return JSON.stringify({
+        'jsonrpc': '2.0', 'id': id, 'method': 'tools/call',
+        'params': { 'name': name, 'arguments': args }
+      });
+    };
     const calls: string[] = [
       JSON.stringify({ 'jsonrpc': '2.0', 'id': 'list', 'method': 'tools/list', 'params': {} }),
-      JSON.stringify({
-        'jsonrpc': '2.0', 'id': 'ping', 'method': 'tools/call',
-        'params': { 'name': 'ping', 'arguments': { 'text': 'ok' } }
-      }),
-      JSON.stringify({
-        'jsonrpc': '2.0', 'id': 'missing', 'method': 'tools/call',
-        'params': { 'name': 'no-such-tool', 'arguments': {} }
-      })
+      call('ping', 'ping', { 'text': 'ok' }),
+      call('missing', 'no-such-tool', {}),
+      call('glob', 'glob', { 'pattern': '**/*.ets' }),
+      call('grep', 'grep', { 'pattern': 'hvolt', 'include': '**/*.ets' }),
+      call('read', 'read', { 'path': 'hvolt.toml' })
     ];
     for (const body of calls) {
       await client.send({ data: body + '\n' });
@@ -85,11 +97,12 @@ let running: McpServer | undefined = undefined;
 
 /** Starts the endpoint once. Failures are logged, never thrown at the caller: an IDE that cannot
  *  host the endpoint still works as an editor. */
-export function startHarness(registry: ToolRegistry = TOOLS): void {
+export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): void {
   if (running !== undefined) {
     return;
   }
   registerPing();
+  registerFileTools(registry, ctx);
   const server = new McpServer();
   server.start(registry, MCP_PORT).then(() => {
     running = server;

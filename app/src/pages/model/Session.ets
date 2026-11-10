@@ -118,6 +118,11 @@ export class Session {
   private staged: boolean = false;
   private options: ShellOptions = new ShellOptions();
 
+  /** Absolute sandbox path of the open project, for the harness tools. */
+  projectPath(): string {
+    return this.dir();
+  }
+
   private dir(): string {
     return this.project.length === 0 ? PROJ : projectDir(this.project);
   }
@@ -227,7 +232,11 @@ export class Session {
     this.onChange();
     this.stageAll();
     // The endpoint is a side facility: a bind failure leaves a working editor and one log line.
-    startHarness();
+    startHarness({
+      projectDir: () => {
+        return this.projectPath();
+      }
+    });
   }
 
   // Called once the page has finished loading. No script is issued from here: a
