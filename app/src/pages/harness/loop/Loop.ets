@@ -34,7 +34,8 @@ export class ChatSession {
     this.history = [];
     if (text.length > 0) {
       this.history.push({
-        role: 'system', content: text, toolCalls: [], toolCallId: ''
+        role: 'system', content: text, reasoning: '', context: '', images: [],
+        toolCalls: [], toolCallId: ''
       });
     }
     for (const message of kept) {
@@ -205,10 +206,21 @@ export class ChatSession {
           });
         }
       }
+      // Every field is defaulted: a record written before a field existed would otherwise come
+      // back with `undefined` and blow up at the first `.length`.
+      const storedImages = row['images'] as Object[];
+      const images: string[] = [];
+      if (storedImages !== undefined && storedImages !== null) {
+        for (const entry of storedImages) {
+          images.push(entry as string);
+        }
+      }
       this.history.push({
         role: row['role'] as Role,
-        content: row['content'] as string,
+        content: row['content'] === undefined ? '' : row['content'] as string,
         reasoning: row['reasoning'] === undefined ? '' : row['reasoning'] as string,
+        context: '',
+        images: images,
         toolCalls: calls,
         toolCallId: row['callId'] === undefined ? '' : row['callId'] as string
       });

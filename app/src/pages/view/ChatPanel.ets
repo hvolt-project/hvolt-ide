@@ -318,6 +318,22 @@ export struct ChatPanel {
       .height(48)
       .padding({ left: 14, right: 8 })
 
+      if (this.lines.length === 0) {
+        Column({ space: 8 }) {
+          Text(this.project.length > 0 ? this.project : '助手')
+            .fontSize(26)
+            .fontWeight(FontWeight.Bold)
+            .fontColor(this.p().textPrimary)
+          Text('问点什么，或输入 / 看命令、@ 引用文件')
+            .fontSize(13)
+            .fontColor(this.p().textTertiary)
+        }
+        .layoutWeight(1)
+        .width('100%')
+        .justifyContent(FlexAlign.Center)
+        .alignItems(HorizontalAlign.Center)
+      }
+
       List({ space: 10 }) {
         ForEach(buildBlocks(this.lines, this.mode, this.toggled), (block: ChatBlock) => {
           ListItem() {
@@ -326,7 +342,8 @@ export struct ChatPanel {
         }, (block: ChatBlock) => block.key + ':' + block.open + ':' + block.text.length + ':' + block.items.length)
 
       }
-      .layoutWeight(1)
+      .layoutWeight(this.lines.length === 0 ? 0 : 1)
+      .height(this.lines.length === 0 ? 0 : undefined)
       .width('100%')
       .padding({ left: 12, right: 12 })
 
@@ -392,50 +409,53 @@ export struct ChatPanel {
       }
 
       Row({ space: 8 }) {
-        Stack() {
-          SymbolGlyph($r('sys.symbol.plus'))
-            .fontSize(16)
-            .fontColor([this.p().textSecondary])
-        }
-        .width(38)
-        .height(36)
-        .borderRadius(10)
-        .backgroundColor(this.p().card)
-        .onClick(() => {
-          this.pickImages();
-        })
+        Row({ space: 2 }) {
+          Stack() {
+            SymbolGlyph($r('sys.symbol.plus'))
+              .fontSize(16)
+              .fontColor([this.p().textSecondary])
+          }
+          .width(34)
+          .height(34)
+          .borderRadius(8)
+          .onClick(() => {
+            this.pickImages();
+          })
 
-        TextArea({ text: this.draft, placeholder: '说点什么，/ 命令，@ 引用文件' })
+          Stack() {
+            SymbolGlyph($r('sys.symbol.mic_fill'))
+              .fontSize(16)
+              .fontColor([this.asrActive ? '#E5484D' : this.p().textSecondary])
+          }
+          .width(34)
+          .height(34)
+          .borderRadius(8)
+          .backgroundColor(this.asrActive ? '#E5484D22' : Color.Transparent)
+          .onTouch((event: TouchEvent) => {
+            if (event.type === TouchType.Down) {
+              this.startDictation();
+            } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+              this.stopDictation();
+            }
+          })
+
+          TextArea({ text: this.draft, placeholder: '说点什么，/ 命令，@ 引用文件' })
           .layoutWeight(1)
-          .constraintSize({ minHeight: 42, maxHeight: 132 })
+          .constraintSize({ minHeight: 36, maxHeight: 132 })
+          .backgroundColor(Color.Transparent)
+          .padding({ left: 4, right: 4, top: 8, bottom: 8 })
           .fontSize(14)
           .fontColor(this.p().textPrimary)
           .placeholderColor(this.p().textTertiary)
-          .backgroundColor(this.p().card)
-          .borderRadius(12)
-          // TextArea draws from the top; at the single-line height the padding is what centres
-          // the text, and it stays correct once the box grows because the content pushes it.
-          .padding({ left: 12, right: 12, top: 11, bottom: 11 })
           .onChange((v: string) => {
             this.draft = v;
             this.refreshSuggest(v);
           })
-        Stack() {
-          SymbolGlyph($r('sys.symbol.mic_fill'))
-            .fontSize(16)
-            .fontColor([this.asrActive ? '#E5484D' : this.p().textSecondary])
         }
-        .width(38)
-        .height(36)
-        .borderRadius(10)
-        .backgroundColor(this.asrActive ? '#E5484D22' : this.p().card)
-        .onTouch((event: TouchEvent) => {
-          if (event.type === TouchType.Down) {
-            this.startDictation();
-          } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
-            this.stopDictation();
-          }
-        })
+        .layoutWeight(1)
+        .backgroundColor(this.p().card)
+        .borderRadius(12)
+        .padding({ left: 2, right: 6, top: 3, bottom: 3 })
 
         Stack() {
           SymbolGlyph($r('sys.symbol.paperplane_fill'))
