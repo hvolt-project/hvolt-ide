@@ -28,7 +28,8 @@ import { ProjectWatcher, WatchEvent } from '../harness/fs/Watch';
 import hilog from '@ohos.hilog';
 import { readPref, writePref } from './Prefs';
 import { connectAsync, hvoltAsync, streamNextAsync } from './Connect';
-import { streamStart, streamRead, streamStop } from 'libnavi.so';
+import { streamRead, streamStop } from 'libnavi.so';
+import { streamStartAsync } from './Connect';
 import {
   KEY_AUTOCONNECT, KEY_AUTOSAVE, KEY_FONT, KEY_SAVE_ON_SWITCH, KEY_TAIL, ShellOptions, applyEditorOptions,
   loadOptions
@@ -1005,18 +1006,31 @@ export class Session {
       tag: this.logTag.length === 0 ? undefined : this.logTag,
       keywords: this.logKeywords
     });
-    const r: StreamOpen = JSON.parse(streamStart(params, FILES)) as StreamOpen;
-    if (r.code !== 0) {
-      this.hlog = '流启动失败：' + (r.output === undefined ? '' : r.output);
-      this.onChange();
-      return;
-    }
-    this.streamHandle = r.handle;
-    this.streamCursor = 0;
     this.streamRunning = true;
-    this.hlog = '';
-    this.pull();
-    this.onChange();
+    streamStartAsync(params, FILES, (raw: string) => {
+      if (!this.streamRunning) {
+        return;
+      }
+      let opened: StreamOpen = { code: -1, handle: 0, output: raw.substring(0, 200) };
+      try {
+        const parsed: StreamOpen = JSON.parse(raw) as StreamOpen;
+        if (parsed.code !== undefined) {
+          opened = parsed;
+        }
+      } catch (e) {
+      }
+      if (opened.code !== 0) {
+        this.streamRunning = false;
+        this.hlog = '流启动失败：' + (opened.output === undefined ? '' : opened.output);
+        this.onChange();
+        return;
+      }
+      this.streamHandle = opened.handle;
+      this.streamCursor = 0;
+      this.hlog = '';
+      this.pull();
+      this.onChange();
+    });
   }
 
   stopLogStream(): void {

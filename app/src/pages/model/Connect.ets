@@ -1,6 +1,6 @@
 import taskpool from '@ohos.taskpool';
 import hilog from '@ohos.hilog';
-import { hvoltCall, streamNext } from 'libnavi.so';
+import { hvoltCall, streamNext, streamStart } from 'libnavi.so';
 
 // The toolchain call blocks until the device answers, and the device asks the user to
 // trust a newly generated key before it answers. That wait on the UI thread reads as a
@@ -33,6 +33,25 @@ export function hvoltAsync(argv: string[], cwd: string, filesDir: string,
     });
 }
 
+// Opening the stream talks to the device before it answers, so it blocks exactly like the toolchain
+// calls do. Run on the UI thread it froze the page for the length of the device's handshake, and
+// the system kills a blocked UI thread after six seconds.
+@Concurrent
+export function streamStartInWorker(paramsJson: string, filesDir: string): string {
+  return streamStart(paramsJson, filesDir);
+}
+
+export function streamStartAsync(paramsJson: string, filesDir: string,
+  done: (raw: string) => void): void {
+  taskpool.execute(streamStartInWorker, paramsJson, filesDir)
+    .then((raw: Object) => {
+      done(raw as string);
+    })
+    .catch((e: Error) => {
+      done('{"code":-1,"output":"' + e.message + '"}');
+    });
+}
+
 // Blocks in this worker until the device writes a line or the wait expires. The caller
 // re-issues it on every answer, so the stream is paced by the device, not by a timer.
 @Concurrent
@@ -59,13 +78,41 @@ export function connectInWorker(addr: string, filesDir: string): string {
   return raw;
 }
 
+// A device that never answers would otherwise hold a worker for as long as the page lives, and
+// enough of those starve the ArkTS VM of worker threads — which is what leaves the WebView unable
+// to start. Five seconds is the handshake budget: past it the answer is "no answer", reported.
+const CONNECT_TIMEOUT_MS: number = 5000;
+
 export function connectAsync(addr: string, filesDir: string, done: (raw: string) => void): void {
-  taskpool.execute(connectInWorker, addr, filesDir)
+  const task = new taskpool.Task(connectInWorker, addr, filesDir);
+  let settled = false;
+  const timer: number = setTimeout(() => {
+    if (settled) {
+      return;
+    }
+    settled = true;
+    taskpool.cancel(task).catch(() => {
+    });
+    hilog.warn(0x0000, 'hvoltide', 'connect timeout after %{public}d ms', CONNECT_TIMEOUT_MS);
+    done('{"code":-1,"output":"连接超时 ' + CONNECT_TIMEOUT_MS + 'ms 无应答"}');
+  }, CONNECT_TIMEOUT_MS);
+
+  taskpool.execute(task)
     .then((raw: Object) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
       hilog.info(0x0000, 'hvoltide', 'connect result %{public}s', (raw as string).substring(0, 400));
       done(raw as string);
     })
     .catch((e: Error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      clearTimeout(timer);
       done('{"code":-1,"output":"' + e.message + '"}');
     });
 }

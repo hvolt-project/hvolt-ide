@@ -73,6 +73,7 @@ export struct SettingsSheet {
   @State private llmModel: string = '';
   @State private llmToken: string = '';
   @State private llmEffort: string = '';
+  @State private chatMode: string = 'normal';
   @State private extraPrompt: string = '';
   @State private modelOptions: SelectOption[] = [];
   @State private modelIndex: number = 0;
@@ -111,6 +112,7 @@ export struct SettingsSheet {
   }
 
   aboutToAppear(): void {
+    this.chatMode = AppStorage.get<string>('chatmode') ?? 'normal';
     this.loadHarnessSettings();
     this.deviceDraft = this.device;
     this.devFeedback = this.linkState;
@@ -533,6 +535,42 @@ export struct SettingsSheet {
                     .onClick(() => {
                       this.llmEffort = pair[0];
                       this.persistLlm();
+                    })
+                }, (pair: string[]) => pair[0] + pair[1])
+            }
+            .width('100%')
+          }
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+          .borderRadius(14)
+          .backgroundColor(this.p().card)
+
+          Column({ space: 8 }) {
+            Row() {
+              Text('工作步骤')
+                .fontSize(15)
+                .fontColor(this.p().textPrimary)
+              Blank()
+              Text('思考与工具调用如何显示')
+                .fontSize(12)
+                .fontColor(this.p().textTertiary)
+            }
+            .width('100%')
+
+            Row({ space: 6 }) {
+              ForEach([['quiet', '简洁'], ['normal', '标准'], ['detail', '详细'], ['full', '完全展开']],
+                (pair: string[]) => {
+                  Text(pair[1])
+                    .fontSize(12)
+                    .fontColor(this.chatMode === pair[0] ? this.p().textPrimary : this.p().textSecondary)
+                    .height(34)
+                    .layoutWeight(1)
+                    .textAlign(TextAlign.Center)
+                    .backgroundColor(this.chatMode === pair[0] ? this.p().brandSoft : this.p().bg)
+                    .borderRadius(8)
+                    .onClick(() => {
+                      this.chatMode = pair[0];
+                      AppStorage.setOrCreate<string>('chatmode', pair[0]);
                     })
                 }, (pair: string[]) => pair[0] + pair[1])
             }

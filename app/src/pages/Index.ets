@@ -13,7 +13,7 @@ import { TopBar } from './view/TopBar';
 import { ActivityBar } from './view/ActivityBar';
 import { LeftPane } from './view/SidePanes';
 import { BottomDock } from './view/BottomDock';
-import { ChatPanel, ChatLine } from './view/ChatPanel';
+import { ChatPanel, ChatLine, FoldMode } from './view/ChatPanel';
 import { setChatHandler } from './model/Bridge';
 import { EditorArea } from './view/EditorArea';
 import { SettingsSheet } from './view/SettingsSheet';
@@ -196,41 +196,46 @@ struct Index {
 
   private appendChat(kind: string, text: string): void {
     const lines: ChatLine[] = this.chatLines.slice();
+    const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
+
     if (kind === 'text') {
-      const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
       if (last !== undefined && last.kind === 'assistant') {
-        lines[lines.length - 1] = { kind: 'assistant', text: last.text + text, open: true };
-        this.chatLines = lines;
-        return;
+        lines[lines.length - 1] = { kind: 'assistant', text: last.text + text, name: '' };
+      } else {
+        lines.push({ kind: 'assistant', text: text, name: '' });
       }
-      lines.push({ kind: 'assistant', text: text, open: true });
       this.chatLines = lines;
       return;
     }
     if (kind === 'thought') {
-      const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
       if (last !== undefined && last.kind === 'thought') {
-        lines[lines.length - 1] = { kind: 'thought', text: last.text + text, open: last.open };
-        this.chatLines = lines;
-        return;
+        lines[lines.length - 1] = { kind: 'thought', text: last.text + text, name: '' };
+      } else {
+        lines.push({ kind: 'thought', text: text, name: '' });
       }
-      lines.push({ kind: 'thought', text: text, open: true });
       this.chatLines = lines;
       return;
     }
-    if (kind === 'tool' || kind === 'result') {
-      lines.push({ kind: 'tool', text: text, open: true });
+    if (kind === 'tool') {
+      // "name args" from the loop: the name is what the process line shows, the args are detail.
+      const cut = text.indexOf(' ');
+      const name = cut > 0 ? text.substring(0, cut) : text;
+      const args = cut > 0 ? text.substring(cut + 1) : '';
+      lines.push({ kind: 'tool', text: args, name: name });
+    } else if (kind === 'result') {
+      const name = last !== undefined && last.kind === 'tool' ? last.name : '';
+      lines.push({ kind: 'tool', text: text, name: name });
     } else if (kind === 'error') {
-      lines.push({ kind: 'error', text: text, open: true });
+      lines.push({ kind: 'error', text: text, name: '' });
     } else if (kind === 'stats') {
-      lines.push({ kind: 'stats', text: text, open: true });
+      lines.push({ kind: 'stats', text: text, name: '' });
     } else if (kind === 'user') {
-      lines.push({ kind: 'user', text: text, open: true });
+      lines.push({ kind: 'user', text: text, name: '' });
     }
     this.chatLines = lines;
   }
 
-  /** Rebuilds the transcript from the session history, e.g. after a restore or a project switch. */
+  /** Rebuilds the transcript from session history: a restore, or a project switch. */
   private syncChatFromHistory(): void {
     const lines: ChatLine[] = [];
     for (const message of this.session.chat.messages()) {
@@ -238,19 +243,27 @@ struct Index {
         continue;
       }
       if (message.role === 'user') {
-        lines.push({ kind: 'user', text: message.content, open: true });
+        lines.push({ kind: 'user', text: message.content, name: '' });
       } else if (message.role === 'assistant') {
         if (message.reasoning.length > 0) {
-          lines.push({ kind: 'thought', text: message.reasoning, open: false });
+          lines.push({ kind: 'thought', text: message.reasoning, name: '' });
         }
         if (message.content.length > 0) {
-          lines.push({ kind: 'assistant', text: message.content, open: true });
+          lines.push({ kind: 'assistant', text: message.content, name: '' });
         }
       } else if (message.role === 'tool') {
-        lines.push({ kind: 'tool', text: message.content, open: true });
+        lines.push({ kind: 'tool', text: message.content, name: '' });
       }
     }
     this.chatLines = lines;
+  }
+
+  private chatMode(): FoldMode {
+    const raw = AppStorage.get<string>('chatmode') ?? 'normal';
+    if (raw === 'quiet' || raw === 'detail' || raw === 'full') {
+      return raw as FoldMode;
+    }
+    return 'normal';
   }
 
   private sendChat(text: string): void {
@@ -673,6 +686,7 @@ struct Index {
       if (this.chatOpen) {
         ChatPanel({
           dark: this.isDark(),
+          mode: this.chatMode(),
           lines: $chatLines,
           busy: $chatBusy,
           actions: {

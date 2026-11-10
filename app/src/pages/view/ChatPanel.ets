@@ -1,18 +1,10 @@
-// Full-screen chat surface. It renders what the loop reports and forwards the user's input; it
-// owns no conversation state beyond what is on screen, so closing and reopening it cannot fork
-// the history.
+// The chat surface: a transcript of blocks, with process folded according to the reader's mode.
 
 import { palette, Palette } from '../model/Palette';
 import { MarkdownView } from './MarkdownView';
+import { buildBlocks, ChatBlock, ChatKind, ChatLine, FoldMode } from './ChatBlocks';
 
-export type ChatKind = 'user' | 'assistant' | 'tool' | 'error' | 'thought' | 'stats';
-
-export interface ChatLine {
-  kind: ChatKind;
-  text: string;
-  /** Reasoning is folded by default; a tap opens it. Ignored by other kinds. */
-  open: boolean;
-}
+export { ChatKind, ChatLine, FoldMode } from './ChatBlocks';
 
 export interface ChatActions {
   send: (text: string) => void;
@@ -24,6 +16,7 @@ export interface ChatActions {
 @Component
 export struct ChatPanel {
   @Prop dark: boolean = true;
+  @Prop mode: FoldMode = 'normal';
   @Link lines: ChatLine[];
   @Link busy: boolean;
   actions: ChatActions = {
@@ -37,40 +30,54 @@ export struct ChatPanel {
     }
   };
   @State private draft: string = '';
+  /** The reader's own open/closed choices; they outlive a mode switch. */
+  @State private toggled: Map<string, boolean> = new Map();
 
   private p(): Palette {
     return palette(this.dark);
   }
 
-  private toggle(line: ChatLine): void {
-    const next: ChatLine[] = [];
-    for (const entry of this.lines) {
-      next.push(entry === line ? { kind: entry.kind, text: entry.text, open: !entry.open } : entry);
-    }
-    this.lines = next;
+  private flip(key: string, current: boolean): void {
+    const next: Map<string, boolean> = new Map();
+    this.toggled.forEach((value: boolean, at: string) => {
+      next.set(at, value);
+    });
+    next.set(key, !current);
+    this.toggled = next;
   }
 
-  private tone(kind: ChatKind): string {
-    if (kind === 'user') {
-      return this.p().brand;
-    }
-    if (kind === 'error') {
-      return '#E5484D';
-    }
-    if (kind === 'tool') {
-      return this.p().textTertiary;
-    }
-    return this.p().textPrimary;
-  }
-
-  // Sent text is a bubble on the right; replies are a document, not a bubble. A tool call is a
-  // single quiet line: it is a fact about the turn, not something addressed to the reader.
   @Builder
-  Line(line: ChatLine) {
-    if (line.kind === 'user') {
+  ProcessItem(item: ChatLine) {
+    if (item.kind === 'thought') {
+      Text(item.text.length === 0 ? '…' : item.text)
+        .fontSize(12)
+        .lineHeight(18)
+        .fontColor(this.p().textTertiary)
+        .width('100%')
+        .padding({ left: 10 })
+        .border({ width: { left: 2 }, color: this.p().divider })
+    } else {
+      Row({ space: 6 }) {
+        Text(item.name.length > 0 ? item.name : '工具')
+          .fontSize(12)
+          .fontColor(this.p().textSecondary)
+        Text(item.text)
+          .fontSize(11)
+          .fontColor(this.p().textTertiary)
+          .layoutWeight(1)
+          .maxLines(1)
+          .textOverflow({ overflow: TextOverflow.Ellipsis })
+      }
+      .width('100%')
+    }
+  }
+
+  @Builder
+  Block(block: ChatBlock) {
+    if (block.kind === 'user') {
       Row() {
         Blank()
-        Text(line.text)
+        Text(block.text)
           .fontSize(14)
           .lineHeight(20)
           .fontColor(this.p().textPrimary)
@@ -81,54 +88,39 @@ export struct ChatPanel {
           .textAlign(TextAlign.Start)
       }
       .width('100%')
-    } else if (line.kind === 'thought') {
+    } else if (block.kind === 'stats') {
+      Text(block.text)
+        .fontSize(11)
+        .fontColor(this.p().textTertiary)
+        .width('100%')
+    } else if (block.kind === 'group') {
       Column({ space: 6 }) {
-        Row({ space: 6 }) {
-          Text(line.open ? '思考' : '思考 · ' + line.text.length + ' 字')
+        Row() {
+          Text(block.open ? '过程' : block.summary)
             .fontSize(12)
             .fontColor(this.p().textTertiary)
-          Blank()
-          Text(line.open ? '收起' : '展开')
+            .layoutWeight(1)
+            .maxLines(1)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Text(block.open ? '收起' : '展开')
             .fontSize(12)
             .fontColor(this.p().textTertiary)
         }
         .width('100%')
         .onClick(() => {
-          this.toggle(line);
+          this.flip(block.key, block.open);
         })
 
-        if (line.open) {
-          Text(line.text.length === 0 ? '…' : line.text)
-            .fontSize(12)
-            .lineHeight(18)
-            .fontColor(this.p().textSecondary)
-            .width('100%')
-            .padding({ left: 8 })
-            .border({ width: { left: 2 }, color: this.p().divider })
+        if (block.open) {
+          ForEach(block.items, (item: ChatLine, index: number) => {
+            this.ProcessItem(item)
+          }, (item: ChatLine, index: number) => index + ':' + item.kind + ':' + item.text.length)
         }
       }
       .width('100%')
-    } else if (line.kind === 'tool') {
-      Text(line.text)
-        .fontSize(12)
-        .fontColor(this.p().textTertiary)
-        .width('100%')
-        .maxLines(2)
-        .textOverflow({ overflow: TextOverflow.Ellipsis })
-    } else if (line.kind === 'stats') {
-      Text(line.text)
-        .fontSize(11)
-        .fontColor(this.p().textTertiary)
-        .width('100%')
-        .padding({ top: 2 })
-    } else if (line.kind === 'error') {
-      Text(line.text)
-        .fontSize(13)
-        .lineHeight(19)
-        .fontColor('#E5484D')
-        .width('100%')
+      .alignItems(HorizontalAlign.Start)
     } else {
-      MarkdownView({ dark: this.dark, text: line.text })
+      MarkdownView({ dark: this.dark, text: block.text })
         .width('100%')
     }
   }
@@ -169,12 +161,12 @@ export struct ChatPanel {
       .height(48)
       .padding({ left: 14, right: 8 })
 
-      List({ space: 8 }) {
-        ForEach(this.lines, (line: ChatLine, index: number) => {
+      List({ space: 10 }) {
+        ForEach(buildBlocks(this.lines, this.mode, this.toggled), (block: ChatBlock) => {
           ListItem() {
-            this.Line(line)
+            this.Block(block)
           }
-        }, (line: ChatLine, index: number) => index + ':' + line.kind)
+        }, (block: ChatBlock) => block.key + ':' + block.text.length + ':' + block.items.length)
       }
       .layoutWeight(1)
       .width('100%')
@@ -216,7 +208,6 @@ export struct ChatPanel {
     .width('100%')
     .height('100%')
     .backgroundColor(this.p().bg)
-    // Swipe right to turn back to the editor — the same page-turn, in reverse.
     .gesture(
       PanGesture({ direction: PanDirection.Horizontal, fingers: 2 })
         .onActionEnd((event: GestureEvent) => {
