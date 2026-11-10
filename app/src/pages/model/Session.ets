@@ -521,7 +521,10 @@ export class Session {
         // A failed write keeps the dirty mark: the file on disk no longer matches the buffer.
         this.append('save on switch failed: ' + leaving);
       }
-      this.openFileNow(rel);
+      // Same reason as flushThen: the switch pushes text back into the WebView.
+      setTimeout(() => {
+        this.openFileNow(rel);
+      }, 0);
     });
   }
 
@@ -604,7 +607,9 @@ export class Session {
     }, (written: boolean) => {
       if (written) {
         this.markDirty(rel, false);
-        this.closeTab(rel);
+        setTimeout(() => {
+          this.closeTab(rel);
+        }, 0);
       } else {
         this.statusText = '保存失败';
         this.statusTone = 3;
@@ -689,7 +694,11 @@ export class Session {
       if (!written) {
         this.append('flush failed before task: ' + rel);
       }
-      next();
+      // Outside the runJavaScript callback: calling the toolchain NAPI from inside it aborts
+      // the process on this device, the same trap the lifecycle hook documents above.
+      setTimeout(() => {
+        next();
+      }, 0);
     });
   }
 
@@ -982,7 +991,15 @@ export class Session {
   }
 
   private end(r: ActionResult, ok: string, fail: string): void {
-    this.log = withLine(this.log, 'code=' + r.code + ' · ' + r.ms + 'ms\n' + r.output);
+    const body = 'code=' + r.code + ' · ' + r.ms + 'ms\n' + r.output;
+    this.log = withLine(this.log, body);
+    // The panel lives in this process only: when a task's own failure ends the process, the
+    // reason would leave nothing to read from outside. Mirror it in chunks so hilog's fixed
+    // line limit does not cut the middle out of a toolchain error.
+    const CHUNK: number = 800;
+    for (let at = 0; at < body.length; at += CHUNK) {
+      hilog.info(0x0000, 'hvoltide', 'OUT %{public}s', body.substring(at, at + CHUNK));
+    }
     this.statusText = r.code === 0 ? ok : fail;
     this.statusTone = r.code === 0 ? 2 : 3;
     this.busy = false;
@@ -1026,19 +1043,25 @@ export class Session {
     this.flushThen(() => this.deployAfterFlush());
   }
 
+  // Order matters: `hvolt build` only signs when the project already carries an
+  // [app.signing] table, and that table is written by `hvolt sign` when it provisions the
+  // materials. Building first leaves the package unsigned and the deploy dies on
+  // "签名未产出包" every first time, so the materials come first and the build after them.
   private deployAfterFlush(): void {
-    hvoltAsync(['build'], this.dir(), FILES, (built: string) => {
-      const b = this.fromEnvelope(built);
-      if (b.code !== 0) {
-        this.end(b, '已部署', '构建失败');
+    this.statusText = '准备签名材料';
+    this.onChange();
+    hvoltAsync(['sign'], this.dir(), FILES, (prepared: string) => {
+      const prep = this.fromEnvelope(prepared);
+      if (prep.code !== 0) {
+        this.end(prep, '已部署', '签名材料失败');
         return;
       }
-      this.statusText = '签名中';
+      this.statusText = '构建中';
       this.onChange();
-      hvoltAsync(['sign'], this.dir(), FILES, (signed: string) => {
-        const r = this.fromEnvelope(signed);
-        if (r.code !== 0) {
-          this.end(r, '已部署', '签名失败');
+      hvoltAsync(['build'], this.dir(), FILES, (built: string) => {
+        const b = this.fromEnvelope(built);
+        if (b.code !== 0) {
+          this.end(b, '已部署', '构建失败');
           return;
         }
         this.statusText = '安装中';

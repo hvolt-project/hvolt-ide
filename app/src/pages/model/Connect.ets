@@ -17,9 +17,16 @@ export function hvoltAsync(argv: string[], cwd: string, filesDir: string,
   done: (raw: string) => void): void {
   taskpool.execute(hvoltInWorker, JSON.stringify(argv), cwd, filesDir)
     .then((raw: Object) => {
-      hilog.info(0x0000, 'hvoltide', 'hvolt done argv=%{public}s raw=%{public}s',
-        argv.length > 0 ? argv[0] : '', (raw as string).substring(0, 200));
-      done(raw as string);
+      // The whole envelope, in chunks: a panic inside the toolchain leaves its message at the
+      // end of `output`, and hilog cuts a line at a fixed length, so a 200-character prefix
+      // shows the steps that succeeded and hides the one that failed.
+      const text: string = raw as string;
+      const CHUNK: number = 800;
+      for (let at = 0; at < text.length; at += CHUNK) {
+        hilog.info(0x0000, 'hvoltide', 'RAW %{public}s %{public}s',
+          argv.length > 0 ? argv[0] : '', text.substring(at, at + CHUNK));
+      }
+      done(text);
     })
     .catch((e: Error) => {
       done('{"code":-1,"output":"' + e.message + '"}');
