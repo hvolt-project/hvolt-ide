@@ -27,7 +27,7 @@ export struct ChatPanel {
   @Prop model: string = '';
   /** Project files, for @ completion. */
   @Prop files: string[] = [];
-  @Link lines: ChatLine[];
+  @Link @Watch('onLinesChanged') lines: ChatLine[];
   @Link busy: boolean;
   actions: ChatActions = {
     send: () => {
@@ -47,12 +47,29 @@ export struct ChatPanel {
   /** Attachments for the next message, as data URLs. */
   @State private attachments: string[] = [];
   private asr: AsrSession = new AsrSession();
+  private scroller: Scroller = new Scroller();
+  /** True while the last row is on screen; new output then keeps the view pinned to the bottom. */
+  private stickBottom: boolean = true;
   /** Pending long-press on the field; -1 means the hold already became dictation. */
   private holdTimer: number = -1;
   /** Draft text before dictation, so interim results do not stack up. */
   private asrBase: string = '';
   /** The reader's own open/closed choices; they outlive a mode switch. */
   @State private toggled: Map<string, boolean> = new Map();
+
+  /** Follows the tail only when it was already at the tail; reading further up is left alone. */
+  onLinesChanged(): void {
+    if (!this.stickBottom) {
+      return;
+    }
+    setTimeout(() => {
+      try {
+        this.scroller.scrollEdge(Edge.Bottom);
+      } catch (e) {
+        // The list is not mounted yet (empty conversation); nothing to follow.
+      }
+    }, 16);
+  }
 
   private endpointLabel(): string {
     const host = this.provider.length > 0 ? this.provider : '未配置';
@@ -497,7 +514,7 @@ export struct ChatPanel {
         .height(48)
         .padding({ left: 14, right: 8 })
 
-        List({ space: 10 }) {
+        List({ space: 10, scroller: this.scroller }) {
           ForEach(buildBlocks(this.lines, this.mode, this.toggled), (block: ChatBlock) => {
             ListItem() {
               this.Block(block)
@@ -507,6 +524,11 @@ export struct ChatPanel {
         .layoutWeight(1)
         .width('100%')
         .padding({ left: 12, right: 12 })
+        // Reading history must not be yanked away by the next token: the tail follows only while
+        // the reader is already there.
+        .onScrollIndex(() => {
+          this.stickBottom = this.scroller.isAtEnd();
+        })
 
         Column() {
           this.Composer()

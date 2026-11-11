@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body { font-family: -apple-system, "HarmonyOS Sans", system-ui, sans-serif; }
+  #out { padding: 6px; }
+  #out svg { max-width: 100%; height: auto; display: block; }
+  #err { color: #E5484D; font-size: 12px; padding: 8px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="out"></div>
+<script src="mermaid.min.js"></script>
+<script>
+  var bridge = null;
+  function report(height) {
+    try {
+      if (bridge && bridge.setHeight) { bridge.setHeight(Math.ceil(height)); }
+    } catch (e) {}
+  }
+  function fail(message) {
+    document.getElementById('out').innerHTML = '';
+    var err = document.createElement('div');
+    err.id = 'err';
+    err.textContent = message;
+    document.body.appendChild(err);
+    report(60);
+  }
+  window.setBridge = function (b) { bridge = b; };
+  window.renderDiagram = function (code, dark) {
+    var out = document.getElementById('out');
+    out.innerHTML = '';
+    var old = document.getElementById('err');
+    if (old) { old.remove(); }
+    try {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: 'loose',
+        theme: dark ? 'dark' : 'default',
+        fontFamily: '-apple-system, "HarmonyOS Sans", system-ui, sans-serif'
+      });
+      var id = 'd' + Date.now();
+      mermaid.render(id, code).then(function (result) {
+        out.innerHTML = result.svg;
+        setTimeout(function () { report(document.body.scrollHeight); }, 30);
+      }).catch(function (e) {
+        fail('mermaid: ' + (e && e.message ? e.message : String(e)));
+      });
+    } catch (e) {
+      fail('mermaid: ' + (e && e.message ? e.message : String(e)));
+    }
+  };
+  report(80);
+</script>
+</body>
+</html>
