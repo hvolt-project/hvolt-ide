@@ -6,33 +6,7 @@
 
 import http from '@ohos.net.http';
 import { LlmConfig } from './Settings';
-
-/**
- * The single place a stored endpoint is interpreted.
- *
- * The preference holds the base only — up to and including the version segment, e.g.
- * https://api.deepseek.com/v1. Both the chat route and the model listing are derived from it
- * here, so the two can never disagree about what the user typed.
- */
-export function normalizeBase(baseUrl: string): string {
-  let base = baseUrl.trim();
-  const chat = '/chat/completions';
-  if (base.endsWith(chat)) {
-    base = base.substring(0, base.length - chat.length);
-  }
-  while (base.endsWith('/')) {
-    base = base.substring(0, base.length - 1);
-  }
-  return base;
-}
-
-export function chatUrl(baseUrl: string): string {
-  return normalizeBase(baseUrl) + '/chat/completions';
-}
-
-export function modelsUrl(baseUrl: string): string {
-  return normalizeBase(baseUrl) + '/models';
-}
+import { chatUrl, modelsUrl, normalizeBase } from './Urls';
 
 interface ModelRow {
   id: string;

@@ -20,26 +20,7 @@ import { setChatHandler } from './model/Bridge';
 import { LlmConfig, loadLlmConfig } from './harness/loop/Settings';
 import { EditorArea } from './view/EditorArea';
 import { SettingsSheet } from './view/SettingsSheet';
-
-/** The endpoint identity shown under the project name: host minus the api. prefix. */
-function providerOf(baseUrl: string): string {
-  if (baseUrl.trim().length === 0) {
-    return '';
-  }
-  let host = baseUrl.trim();
-  const slash = host.indexOf('://');
-  if (slash >= 0) {
-    host = host.substring(slash + 3);
-  }
-  const cut = host.indexOf('/');
-  if (cut >= 0) {
-    host = host.substring(0, cut);
-  }
-  if (host.startsWith('api.')) {
-    host = host.substring(4);
-  }
-  return host;
-}
+import { providerOf } from './harness/loop/Urls';
 
 @Entry
 @Component
