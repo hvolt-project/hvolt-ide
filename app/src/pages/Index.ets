@@ -639,7 +639,7 @@ struct Index {
         })
       }
       .width('100%')
-      .height(this.frame())
+      .height('100%')
       .alignItems(HorizontalAlign.Start)
 
       if (this.showSettings) {
@@ -748,7 +748,11 @@ struct Index {
       }
     }
     .width('100%')
-    .height(this.frame())
+    .height('100%')
+    // The surface extends under the status bar for drawing, so the inset it used to subtract from
+    // a fixed height is now an explicit top padding; the height itself has to stay relative for
+    // RESIZE to shrink it when the keyboard opens.
+    .padding({ top: this.topInset })
     .expandSafeArea([SafeAreaType.SYSTEM, SafeAreaType.CUTOUT], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
   }
 }

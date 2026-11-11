@@ -37,17 +37,31 @@ export interface ToolCall {
 }
 
 export function systemMessage(text: string): ChatMessage {
-  return { role: 'system', content: text, toolCalls: [], toolCallId: '' };
+  return {
+    role: 'system', content: text, reasoning: '', context: '', images: [],
+    toolCalls: [], toolCallId: ''
+  };
 }
 
-export function userMessage(text: string): ChatMessage {
-  return { role: 'user', content: text, toolCalls: [], toolCallId: '' };
+/** `images` are data URLs; the previous signature had no such parameter, so callers that passed
+ *  attachments had them silently dropped and `message.images` arrived undefined at the wire. */
+export function userMessage(text: string, images: string[]): ChatMessage {
+  return {
+    role: 'user', content: text, reasoning: '', context: '', images: images,
+    toolCalls: [], toolCallId: ''
+  };
 }
 
-export function assistantMessage(text: string, calls: ToolCall[]): ChatMessage {
-  return { role: 'assistant', content: text, toolCalls: calls, toolCallId: '' };
+export function assistantMessage(text: string, calls: ToolCall[], reasoning: string): ChatMessage {
+  return {
+    role: 'assistant', content: text, reasoning: reasoning, context: '', images: [],
+    toolCalls: calls, toolCallId: ''
+  };
 }
 
 export function toolMessage(callId: string, text: string): ChatMessage {
-  return { role: 'tool', content: text, toolCalls: [], toolCallId: callId };
+  return {
+    role: 'tool', content: text, reasoning: '', context: '', images: [],
+    toolCalls: [], toolCallId: callId
+  };
 }

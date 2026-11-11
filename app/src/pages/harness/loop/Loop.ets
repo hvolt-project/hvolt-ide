@@ -8,7 +8,7 @@ import hilog from '@ohos.hilog';
 import { TOOLS, ToolSpec } from '../mcp/Registry';
 import { AbortFlag, streamChat } from './Client';
 import { LlmConfig } from './Settings';
-import { ChatMessage, Role, ToolCall, Usage, assistantMessage, emptyUsage, toolMessage, userMessage } from './Types';
+import { ChatMessage, Role, ToolCall, Usage, assistantMessage, emptyUsage, systemMessage, toolMessage, userMessage } from './Types';
 
 export interface LoopSink {
   onText: (delta: string) => void;
@@ -70,7 +70,7 @@ export class ChatSession {
       return;
     }
     if (this.history.length === 0 || this.history[0].role !== 'system') {
-      this.history.unshift({ role: 'system', content: '', toolCalls: [], toolCallId: '' });
+      this.history.unshift(systemMessage(''));
     }
     const said = userMessage(userText, images);
     said.context = context;
