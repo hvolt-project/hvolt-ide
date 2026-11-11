@@ -321,6 +321,20 @@ export struct MarkdownView {
     return widths;
   }
 
+  private tableWidths: Map<string, number[]> = new Map();
+
+  /** Widths are per table and only depend on its text, so they are computed once per block. */
+  private widthsFor(block: MdBlock): number[] {
+    const key = block.rows.length + ':' + block.rows.map((row: string[]) => row.join('\u0001')).join('\u0002');
+    const cached = this.tableWidths.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+    const widths = this.columnWidths(block.rows);
+    this.tableWidths.set(key, widths);
+    return widths;
+  }
+
   @Builder
   Table(block: MdBlock) {
     // A table is wider than a phone in most real answers, so it scrolls sideways instead of
@@ -337,7 +351,7 @@ export struct MarkdownView {
                 .textOverflow({ overflow: TextOverflow.Ellipsis })
                 .fontWeight(rowIndex === 0 ? FontWeight.Medium : FontWeight.Normal)
                 .fontColor(rowIndex === 0 ? this.p().textPrimary : this.p().textSecondary)
-                .width(this.columnWidths(block.rows)[cellIndex])
+                .width(this.widthsFor(block)[cellIndex])
                 .padding({ left: 8, right: 8, top: 6, bottom: 6 })
                 .textAlign(TextAlign.Start)
             }, (cell: string, cellIndex: number) => cellIndex + ':' + cell.length)

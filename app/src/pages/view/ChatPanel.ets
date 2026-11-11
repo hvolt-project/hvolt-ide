@@ -53,7 +53,6 @@ export struct ChatPanel {
   /** Pending long-press on the field; -1 means the hold already became dictation. */
   private holdTimer: number = -1;
   /** Draft text before dictation, so interim results do not stack up. */
-  private asrBase: string = '';
   /** The reader's own open/closed choices; they outlive a mode switch. */
   @State private toggled: Map<string, boolean> = new Map();
 
@@ -119,10 +118,9 @@ export struct ChatPanel {
     if (this.busy || this.asrActive || this.draft.trim().length > 0) {
       return;
     }
-    this.asrBase = '';
     this.asrActive = true;
     this.asr.start((text: string, final: boolean) => {
-      this.draft = this.asrBase + text;
+      this.draft = text;
     }, (message: string) => {
       this.asrActive = false;
       this.showToast(message);

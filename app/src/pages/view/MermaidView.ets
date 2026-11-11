@@ -2,7 +2,6 @@
 // engine; the library and its host page ship inside the package so it works offline.
 
 import webview from '@ohos.web.webview';
-import hilog from '@ohos.hilog';
 import { palette, Palette } from '../model/Palette';
 
 /** Receives the rendered height from the page so the card can size itself. */
@@ -82,12 +81,7 @@ export struct MermaidView {
         })
         .onPageEnd(() => {
           this.loaded = true;
-          hilog.info(0x0000, 'hvoltide', 'mermaid page ready');
           this.render();
-        })
-        .onConsole((event) => {
-          hilog.info(0x0000, 'hvoltide', 'mermaid console: %{public}s', event.message.getMessage());
-          return false;
         })
         // A diagram taller than the cap scrolls inside its card instead of stretching the list.
         .nestedScroll({
