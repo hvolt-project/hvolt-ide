@@ -48,3 +48,46 @@ export function mergeTail(existing: string, incoming: string[], limit: number): 
   }
   return kept.join('\n');
 }
+
+/** The JSON body inside captured output. Other threads' logging lands in the same buffer, so the
+ *  object is picked out by its outermost braces rather than parsed off the whole string. */
+export function jsonLine(text: string): string {
+  const start = text.indexOf('{');
+  const end = text.lastIndexOf('}');
+  if (start < 0 || end <= start) {
+    return text.trim();
+  }
+  return text.substring(start, end + 1);
+}
+
+export interface Envelope {
+  code: number;
+  output: string;
+}
+
+/** The toolchain's JSON envelope, with a fallback for a response that is not JSON at all. A
+ *  missing code reads as failure: the caller must not treat an unparseable answer as success. */
+export function parseEnvelope(raw: string): Envelope {
+  try {
+    const parsed = JSON.parse(raw) as Record<string, Object>;
+    const code = parsed['code'];
+    const output = parsed['output'];
+    return {
+      code: code === undefined || code === null ? -1 : code as number,
+      output: output === undefined || output === null ? raw : output as string
+    };
+  } catch (e) {
+    return { code: -1, output: raw.substring(0, 400) };
+  }
+}
+
+/** The account id in AGC's whoami answer, or an empty string when the answer carries none. */
+export function parseAgcUser(output: string): string {
+  const at = output.indexOf('User ID:');
+  if (at < 0) {
+    return '';
+  }
+  const rest = output.substring(at + 'User ID:'.length).trim();
+  const end = rest.search(/\s/);
+  return end > 0 ? rest.substring(0, end) : rest;
+}

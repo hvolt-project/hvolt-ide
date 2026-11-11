@@ -5,7 +5,7 @@ import web_webview from '@ohos.web.webview';
 
 import { Bp, EditorBridge, setEditorHandlers, setPendingText } from './Bridge';
 import { withLine } from './Util';
-import { firstLine, mergeTail, statLine } from './Format';
+import { Envelope, firstLine, jsonLine, mergeTail, parseEnvelope, statLine } from './Format';
 import {
   argvAbcRecords, argvAgcLoginCallback, argvAgcLoginUrl, argvAgcLoginWait, argvAgcWhoami, argvBuild,
   argvLog, argvPush, argvSign, argvStart, argvVersion
@@ -39,6 +39,7 @@ import {
   KEY_AUTOCONNECT, KEY_AUTOSAVE, KEY_FONT, KEY_SAVE_ON_SWITCH, KEY_TAIL, ShellOptions, applyEditorOptions,
   loadOptions
 } from './Options';
+import { AgcAccount } from './Agc';
 
 const OWN_BUNDLE: string = 'xyz.sudofree.hvolt.ide';
 
@@ -87,9 +88,11 @@ export class Session {
   logLevel: string = '';
   logTag: string = '';
   logKeywords: string[] = [];
-  agcUrl: string = '';
+  readonly agc: AgcAccount = new AgcAccount({
+    notify: () => this.onChange(),
+    log: (line: string) => this.append(line)
+  });
   // Set once whoami answers; the sheet shows the account instead of a login button.
-  agcUser: string = '';
   hlog: string = '';
   // 0 not connected, 1 connecting, 2 connected, 3 failed. The status bar's dot and the
   // device list both read this one value, so they can never disagree.
@@ -99,7 +102,6 @@ export class Session {
   // runtime addresses, and hvolt already reads it without ark_disasm.
   outline: string[] = [];
   outlineNote: string = '先构建';
-  agcState: string = '';
   signingReady: boolean = false;
   version: string = '';
   device: string = SELF_HDC;
@@ -331,7 +333,6 @@ export class Session {
     // the status line only needs a starting value. The sheet refreshes it on open.
     // The token lives in the sandbox and survives a restart, so the account is read back
     // on boot instead of waiting for the user to press log in again.
-    this.agcState = '查询中';
     // Connecting is not a boot step: the handshake against a device that is not up yet blocks
     // for as long as the transport waits, and the workbench has nothing to show meanwhile.
     // The channel connects when the user asks for it (settings, or the first device action).
@@ -339,7 +340,7 @@ export class Session {
     this.linkState = '未连接';
     this.showTraceTail();
     this.autoConnectOnBoot();
-    this.queryAgc();
+    this.agc.refresh();
     this.onChange();
     this.stageAll();
     // The endpoint is a side facility: a bind failure leaves a working editor and one log line.
@@ -1338,28 +1339,10 @@ export class Session {
 
   // Anything that is not the toolchain's JSON envelope is reported as a failure instead
   // of throwing, so a bad reply cannot leave a command stuck in its "running" label.
-  private jsonLine(text: string): string {
-    const start = text.indexOf('{');
-    const end = text.lastIndexOf('}');
-    if (start < 0 || end <= start) {
-      return text.trim();
-    }
-    return text.substring(start, end + 1);
-  }
-
   private fromEnvelope(raw: string): ActionResult {
-    try {
-      const parsed: HvoltResult = JSON.parse(raw) as HvoltResult;
-      const out: ActionResult = {
-        code: parsed.code === undefined ? -1 : parsed.code,
-        output: parsed.output === undefined ? raw : parsed.output,
-        ms: 0
-      };
-      return out;
-    } catch (e) {
-      const out: ActionResult = { code: -1, output: raw.substring(0, 400), ms: 0 };
-      return out;
-    }
+    const parsed: Envelope = parseEnvelope(raw);
+    const out: ActionResult = { code: parsed.code, output: parsed.output, ms: 0 };
+    return out;
   }
 
   // AGC talks to the network; both the login and the status query run in the worker so
@@ -1368,86 +1351,14 @@ export class Session {
   // The authorization page is loaded in the app's own WebView: the redirect it makes to
   // 127.0.0.1 carries the tempToken, and that request is intercepted inside the sandbox.
   // No external browser, no listener that a browser on another host could never reach.
-  loginAgc(): void {
-    this.agcState = '获取授权地址…';
-    this.onChange();
-    hvoltAsync(argvAgcLoginUrl(), FILES, FILES, (raw: string) => {
-      const r = this.fromEnvelope(raw);
-      // The captured stdout can carry noise from other threads, so the JSON is picked out
-      // by its first brace rather than parsed off the whole string.
-      const line = this.jsonLine(r.output);
-      let port = 0;
-      try {
-        const info: AgcAuthInfo = JSON.parse(line) as AgcAuthInfo;
-        port = info.port;
-        this.agcUrl = info.url;
-        this.agcState = '等待授权';
-      } catch (e) {
-        this.agcState = '获取授权地址失败：' + r.output;
-        this.onChange();
-        return;
-      }
-      this.onChange();
-      // The page redirects to this device's own loopback, so the listener runs here and
-      // only the page is shown in the WebView.
-      hvoltAsync(argvAgcLoginWait(port), FILES, FILES, (done: string) => {
-        const finished = this.fromEnvelope(done);
-        this.agcUrl = '';
-        this.append(finished.output.trim());
-        this.queryAgc();
-      });
-    });
-  }
+
 
   /// Called from the WebView the moment it sees the redirect; the URL itself is the
   /// credential hand-off, so it is passed straight to the token exchange.
-  completeAgcLogin(callbackUrl: string): void {
-    this.agcUrl = '';
-    this.agcState = '换取 token…';
-    this.onChange();
-    hvoltAsync(argvAgcLoginCallback(callbackUrl), FILES, FILES, (raw: string) => {
-      const r = this.fromEnvelope(raw);
-      this.append(r.output.trim());
-      this.queryAgc();
-    });
-  }
+
 
   // Credentials live in the sandbox's own ~/.hvolt/auth.json; signing out is removing it.
-  logoutAgc(): void {
-    try {
-      const path = FILES + '/.hvolt/auth.json';
-      if (fs.accessSync(path)) {
-        fs.unlinkSync(path);
-      }
-      this.agcUser = '';
-      this.agcState = '未登录';
-    } catch (e) {
-      this.agcState = '登出失败';
-    }
-    this.onChange();
-  }
 
-  queryAgc(): void {
-    hvoltAsync(argvAgcWhoami(), FILES, FILES, (raw: string) => {
-      const r = this.fromEnvelope(raw);
-      const text = r.output;
-      const at = text.indexOf('User ID:');
-      if (r.code === 0 && at >= 0) {
-        const rest = text.substring(at + 'User ID:'.length).trim();
-        const end = rest.search(/\s/);
-        this.agcUser = end > 0 ? rest.substring(0, end) : rest;
-        this.agcState = '已登录';
-      } else {
-        this.agcUser = '';
-        this.agcState = '未登录';
-      }
-      this.onChange();
-    });
-    // Boot does not wait on AGC: the query reaches the network when a backend exists, and
-    // the status line only needs a starting value. The sheet refreshes it on open.
-    // The token lives in the sandbox and survives a restart, so the account is read back
-    // on boot instead of waiting for the user to press log in again.
-    this.agcState = '查询中';
-    this.onChange();
-  }
+
+
 }

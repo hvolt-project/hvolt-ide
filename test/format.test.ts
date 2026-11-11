@@ -3,7 +3,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { firstLine, mergeTail, statLine } from '../app/src/pages/model/Format.ts';
+import { firstLine, jsonLine, mergeTail, parseAgcUser, parseEnvelope, statLine } from '../app/src/pages/model/Format.ts';
 
 function usage(prompt: number, completion: number, reasoning: number): { promptTokens: number; completionTokens: number; totalTokens: number; reasoningTokens: number } {
   return {
@@ -69,4 +69,53 @@ test('mergeTail with a limit of zero yields nothing', () => {
 test('mergeTail trims a single oversized page to the newest lines', () => {
   const page = ['1', '2', '3', '4', '5'];
   assert.equal(mergeTail('', page, 2), '4\n5');
+});
+
+test('jsonLine picks the object out of surrounding logging', () => {
+  const noisy = 'worker: hello\n{"port":8080,"url":"http://x"}\nnoise';
+  assert.equal(jsonLine(noisy), '{"port":8080,"url":"http://x"}');
+});
+
+test('jsonLine returns trimmed text when there is no object', () => {
+  assert.equal(jsonLine('  plain  '), 'plain');
+});
+
+test('jsonLine keeps nested braces inside the outermost pair', () => {
+  assert.equal(jsonLine('x {"a":{"b":1}} y'), '{"a":{"b":1}}');
+});
+
+test('an envelope yields its code and output', () => {
+  const parsed = parseEnvelope('{"code":0,"output":"ok"}');
+  assert.equal(parsed.code, 0);
+  assert.equal(parsed.output, 'ok');
+});
+
+test('a non-JSON answer is a failure carrying the raw text', () => {
+  const parsed = parseEnvelope('segmentation fault');
+  assert.equal(parsed.code, -1);
+  assert.equal(parsed.output, 'segmentation fault');
+});
+
+test('a JSON answer without a code is a failure, not a silent success', () => {
+  const parsed = parseEnvelope('{"output":"no code"}');
+  assert.equal(parsed.code, -1);
+  assert.equal(parsed.output, 'no code');
+});
+
+test('a JSON answer without an output falls back to the raw text', () => {
+  const parsed = parseEnvelope('{"code":2}');
+  assert.equal(parsed.code, 2);
+  assert.equal(parsed.output, '{"code":2}');
+});
+
+test('the AGC user id is read from the whoami answer', () => {
+  assert.equal(parseAgcUser('User ID:  70086000195119114\nTeam ID: 1'), '70086000195119114');
+});
+
+test('a whoami answer without a user id yields empty', () => {
+  assert.equal(parseAgcUser('not logged in'), '');
+});
+
+test('a user id that ends the line is still returned', () => {
+  assert.equal(parseAgcUser('User ID: abc'), 'abc');
 });

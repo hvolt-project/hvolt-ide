@@ -26,3 +26,15 @@ Two constraints shape these files:
 
 Anything that touches ArkUI stays on the device; this directory is for the parts where a
 regression should be caught before a build.
+
+## Import graph
+
+```bash
+python3 test/check-imports.py
+```
+
+The device build does not verify that a named import exists in its source module. Moving a symbol
+between files therefore compiles cleanly and fails on the device with
+`the requested module ... does not provide an export name <name>` — which is exactly how a session
+crashed after `chatUrl` moved from `Models` to `Urls`. This walks the whole graph and reports any
+import that does not resolve to a declared export.

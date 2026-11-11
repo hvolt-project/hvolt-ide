@@ -105,18 +105,18 @@ struct Index {
     this.logText = s.log;
     this.hlogText = s.hlog;
     this.devTarget = s.device;
-    this.agcText = s.agcState;
-    this.agcUser = s.agcUser;
-    this.agcAuthUrl = s.agcUrl;
+    this.agcText = s.agc.state;
+    this.agcUser = s.agc.user;
+    this.agcAuthUrl = s.agc.url;
     this.statusToneValue = s.statusTone;
     AppStorage.setOrCreate('ide.outline', s.outline);
     AppStorage.setOrCreate('ide.outlineNote', s.outlineNote);
-    AppStorage.setOrCreate('ide.agc', s.agcState);
+    AppStorage.setOrCreate('ide.agc', s.agc.state);
     AppStorage.setOrCreate('ide.busy', s.busy);
     AppStorage.setOrCreate('ide.projectInfo',
       s.project + ' · ' + s.sourceCount + ' 个源文件\n' + s.projectPath());
     AppStorage.setOrCreate('ide.signingInfo',
-      (s.signingReady ? '调试签名材料已就位' : '未找到签名材料') + '\n' + s.agcState);
+      (s.signingReady ? '调试签名材料已就位' : '未找到签名材料') + '\n' + s.agc.state);
     AppStorage.setOrCreate('ide.aboutInfo', s.version);
   }
 
@@ -379,7 +379,7 @@ struct Index {
   // is closed first, so a hardware or gesture back never drops the user out mid-task.
   onBackPress(): boolean {
     if (this.agcAuthUrl.length > 0) {
-      this.session.agcUrl = '';
+      this.session.agc.url = '';
       this.agcAuthUrl = '';
       return true;
     }
@@ -686,10 +686,10 @@ struct Index {
           devices: this.devList,
           link: this.link,
           onAgcLogin: () => {
-            this.session.loginAgc();
+            this.session.agc.start();
           },
           onAgcLogout: () => {
-            this.session.logoutAgc();
+            this.session.agc.logout();
           },
           onDevices: (list: string[]) => {
             this.session.saveDevices(list);
@@ -711,7 +711,7 @@ struct Index {
                 .fontSize(14)
                 .fontColor(this.p().brand)
                 .onClick(() => {
-                  this.session.agcUrl = '';
+                  this.session.agc.url = '';
                   this.agcAuthUrl = '';
                 })
             }

@@ -9,7 +9,7 @@ import { TOOLS } from '../mcp/Registry';
 import { ChatMessage, ToolCall, Usage } from './Types';
 import { LlmConfig } from './Settings';
 import { applyDelta, collectCalls, ToolCallChunk } from './Stream';
-import { chatUrl } from './Models';
+import { chatUrl } from './Urls';
 
 export interface StreamSink {
   onText: (delta: string) => void;
