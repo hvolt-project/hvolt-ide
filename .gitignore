@@ -12,3 +12,17 @@ app/build/
 .npmcache/
 .npmlogs/
 .edge-profile/
+
+# Signing material: private key, certificate chain and passwords. A repository with the keystore
+# in it hands out the ability to sign packages as this app.
+app/signing/
+
+# SDK distribution: the device-side ArkTS compiler and the API declarations the editor offers
+# completions from. Both come from the HarmonyOS SDK on the build host; see README.
+app/src/libs/arm64-v8a/libes2abc.so
+app/resources/rawfile/sdk/
+
+# Working notes, design drafts and layout screenshots: not part of the product.
+docs/
+DESIGN.md
+PLAN.md
