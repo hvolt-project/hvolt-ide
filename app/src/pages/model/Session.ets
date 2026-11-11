@@ -5,6 +5,7 @@ import web_webview from '@ohos.web.webview';
 
 import { Bp, EditorBridge, setEditorHandlers, setPendingText } from './Bridge';
 import { withLine } from './Util';
+import { firstLine, mergeTail, statLine } from './Format';
 import { FILES, PROJ, listSources, stageProject } from './Stage';
 import { SELF_HDC, hvolt, hvoltArgv, HvoltResult } from './Hvolt';
 import {
@@ -53,35 +54,6 @@ interface AgcAuthInfo {
 interface StreamPage {
   next: number;
   rows: string[];
-}
-
-// The captured stdout also carries the WebView's own logging, so a failure message has to
-// be picked out rather than read off the first line.
-function firstLine(text: string): string {
-  const lines = text.trim().split('\n');
-  for (const line of lines) {
-    if (line.indexOf('✗') >= 0) {
-      return line.trim();
-    }
-  }
-  return lines.length > 0 ? lines[0].trim() : '';
-}
-
-
-/** One line at the end of a turn: what it cost and how long it took. */
-function statLine(usage: Usage, rounds: number, millis: number): string {
-  const parts: string[] = [];
-  parts.push((millis / 1000).toFixed(1) + 's');
-  if (usage.totalTokens > 0) {
-    parts.push('in ' + usage.promptTokens + ' · out ' + usage.completionTokens);
-    if (usage.reasoningTokens > 0) {
-      parts.push('思考 ' + usage.reasoningTokens);
-    }
-  }
-  if (rounds > 1) {
-    parts.push(rounds + ' 轮');
-  }
-  return parts.join(' · ');
 }
 
 export class Session {
@@ -1063,14 +1035,7 @@ export class Session {
       if (page.rows.length > 0) {
         this.streamCursor = page.next;
         const limit = AppStorage.get<number>(KEY_TAIL) ?? 300;
-        const kept = this.hlog.length === 0 ? [] : this.hlog.split('\n');
-        for (const line of page.rows) {
-          kept.push(line);
-        }
-        while (kept.length > limit) {
-          kept.shift();
-        }
-        this.hlog = kept.join('\n');
+        this.hlog = mergeTail(this.hlog, page.rows, limit);
         this.onChange();
       }
       this.pull();
