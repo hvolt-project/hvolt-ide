@@ -21,7 +21,7 @@ export struct MermaidView {
   /** Height in vp, reported by the page and clamped between these bounds. */
   @State private height: number = 88;
   private static readonly MIN_H: number = 88;
-  private static readonly MAX_H: number = 360;
+  private static readonly MAX_H: number = 520;
   private controller: webview.WebviewController = new webview.WebviewController();
   private bridge: MermaidBridge = new MermaidBridge();
   private loaded: boolean = false;
@@ -50,8 +50,9 @@ export struct MermaidView {
       if (px <= 0) {
         return;
       }
-      hilog.info(0x0000, 'hvoltide', 'mermaid height px=%{public}d', px);
-      let vp = px2vp(px);
+      // The page measures in CSS pixels, which already equal vp: cssPx * dpr = devicePx and
+      // vp * density = devicePx, with dpr == density. Running px2vp as well scales twice.
+      let vp = px;
       if (vp < MermaidView.MIN_H) {
         vp = MermaidView.MIN_H;
       }
@@ -71,6 +72,8 @@ export struct MermaidView {
         .height(this.height)
         .backgroundColor(Color.Transparent)
         .javaScriptAccess(true)
+        // Pinch zoom and inner scrolling are for reading a diagram that is larger than its card.
+        .zoomAccess(true)
         .javaScriptProxy({
           object: this.bridge,
           name: 'bridge',
