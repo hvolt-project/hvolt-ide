@@ -27,6 +27,21 @@ export function emptyBlock(kind: MdKind, text: string, lang: string): MdBlock {
   return { kind: kind, text: text, lang: lang, rows: [] };
 }
 
+/** Rough rendered width of a cell, enough to keep columns aligned without measuring text. */
+function cellWidth(text: string): number {
+  let wide = 0;
+  let narrow = 0;
+  for (const ch of text) {
+    if (ch.charCodeAt(0) > 0x2e80) {
+      wide++;
+    } else {
+      narrow++;
+    }
+  }
+  const width = wide * 13 + narrow * 7.2 + 18;
+  return width < 64 ? 64 : Math.ceil(width);
+}
+
 /** Splits a table row `| a | b |` into cells. Escaped pipes are left as text. */
 function splitRow(line: string): string[] {
   let body = line.trim();
@@ -290,31 +305,56 @@ export struct MarkdownView {
     .alignItems(HorizontalAlign.Start)
   }
 
+  /** Widest cell per column, so every row lines up without wrapping. */
+  private columnWidths(rows: string[][]): number[] {
+    const widths: number[] = [];
+    for (const row of rows) {
+      for (let index = 0; index < row.length; index++) {
+        const width = cellWidth(plainInline(row[index]));
+        if (index >= widths.length) {
+          widths.push(width);
+        } else if (width > widths[index]) {
+          widths[index] = width;
+        }
+      }
+    }
+    return widths;
+  }
+
   @Builder
   Table(block: MdBlock) {
-    Column({ space: 0 }) {
-      ForEach(block.rows, (row: string[], rowIndex: number) => {
-        Row({ space: 0 }) {
-          ForEach(row, (cell: string, cellIndex: number) => {
-            Text(plainInline(cell))
-              .fontSize(12)
-              .lineHeight(17)
-              .fontWeight(rowIndex === 0 ? FontWeight.Medium : FontWeight.Normal)
-              .fontColor(rowIndex === 0 ? this.p().textPrimary : this.p().textSecondary)
-              .layoutWeight(1)
-              .padding({ left: 8, right: 8, top: 6, bottom: 6 })
-              .textAlign(TextAlign.Start)
-          }, (cell: string, cellIndex: number) => cellIndex + ':' + cell.length)
-        }
-        .width('100%')
-        .alignItems(VerticalAlign.Top)
-        .backgroundColor(rowIndex === 0 ? (this.dark ? '#161b22' : '#eef1f4') : Color.Transparent)
-        .border({ width: { bottom: 1 }, color: this.dark ? '#21262d' : '#e1e4e8' })
-      }, (row: string[], rowIndex: number) => rowIndex + ':' + row.length)
+    // A table is wider than a phone in most real answers, so it scrolls sideways instead of
+    // folding every cell into three lines.
+    Scroll() {
+      Column({ space: 0 }) {
+        ForEach(block.rows, (row: string[], rowIndex: number) => {
+          Row({ space: 0 }) {
+            ForEach(row, (cell: string, cellIndex: number) => {
+              Text(plainInline(cell))
+                .fontSize(12)
+                .lineHeight(17)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+                .fontWeight(rowIndex === 0 ? FontWeight.Medium : FontWeight.Normal)
+                .fontColor(rowIndex === 0 ? this.p().textPrimary : this.p().textSecondary)
+                .width(this.columnWidths(block.rows)[cellIndex])
+                .padding({ left: 8, right: 8, top: 6, bottom: 6 })
+                .textAlign(TextAlign.Start)
+            }, (cell: string, cellIndex: number) => cellIndex + ':' + cell.length)
+          }
+          .alignItems(VerticalAlign.Top)
+          .backgroundColor(rowIndex === 0 ? (this.dark ? '#161b22' : '#eef1f4') : Color.Transparent)
+          .border({ width: { bottom: 1 }, color: this.dark ? '#21262d' : '#e1e4e8' })
+        }, (row: string[], rowIndex: number) => rowIndex + ':' + row.length)
+      }
+      .alignItems(HorizontalAlign.Start)
     }
+    .scrollable(ScrollDirection.Horizontal)
+    .scrollBar(BarState.Off)
     .width('100%')
     .border({ width: 1, color: this.dark ? '#21262d' : '#e1e4e8' })
     .borderRadius(8)
+    .clip(true)
   }
 
   build() {

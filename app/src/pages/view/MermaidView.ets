@@ -21,7 +21,7 @@ export struct MermaidView {
   /** Height in vp, reported by the page and clamped between these bounds. */
   @State private height: number = 88;
   private static readonly MIN_H: number = 88;
-  private static readonly MAX_H: number = 520;
+  private static readonly MAX_H: number = 260;
   private controller: webview.WebviewController = new webview.WebviewController();
   private bridge: MermaidBridge = new MermaidBridge();
   private loaded: boolean = false;

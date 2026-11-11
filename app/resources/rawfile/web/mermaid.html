@@ -62,6 +62,85 @@
 
   window.setBridge = function (b) { try { window.bridge = b; } catch (e) {} };
 
+  function parseColor(text) {
+    if (!text) { return null; }
+    var value = String(text).trim();
+    if (value.indexOf('#') === 0) {
+      if (value.length === 4) {
+        return [
+          parseInt(value[1] + value[1], 16),
+          parseInt(value[2] + value[2], 16),
+          parseInt(value[3] + value[3], 16)
+        ];
+      }
+      if (value.length >= 7) {
+        return [
+          parseInt(value.substring(1, 3), 16),
+          parseInt(value.substring(3, 5), 16),
+          parseInt(value.substring(5, 7), 16)
+        ];
+      }
+      return null;
+    }
+    var rgb = value.match(/rgba?\(([^)]+)\)/);
+    if (rgb) {
+      var parts = rgb[1].split(',');
+      return [parseInt(parts[0], 10), parseInt(parts[1], 10), parseInt(parts[2], 10)];
+    }
+    if (value === 'white') { return [255, 255, 255]; }
+    if (value === 'black') { return [0, 0, 0]; }
+    return null;
+  }
+
+  function luminance(rgb) {
+    return (0.299 * rgb[0] + 0.587 * rgb[1] + 0.114 * rgb[2]) / 255;
+  }
+
+  // A diagram may carry its own fill; the label colour then has to follow that fill, not the theme.
+  function fixContrast(dark) {
+    var out = document.getElementById('out');
+    var groups = out.querySelectorAll('g.node, g.cluster, g.edgeLabel');
+    for (var i = 0; i < groups.length; i++) {
+      var group = groups[i];
+      var shape = group.querySelector('rect, polygon, circle, ellipse, path');
+      var labels = group.querySelectorAll('text, tspan, foreignObject div, foreignObject span');
+      if (!labels.length) { continue; }
+      var fill = null;
+      if (shape) {
+        fill = parseColor(shape.getAttribute('fill')) ||
+               parseColor(shape.style && shape.style.fill) ||
+               parseColor(window.getComputedStyle(shape).fill);
+      }
+      var labelColor;
+      if (fill) {
+        labelColor = luminance(fill) > 0.55 ? '#0b0f14' : '#f0f6fc';
+      } else {
+        labelColor = dark ? '#e6edf3' : '#1b1f24';
+      }
+      for (var j = 0; j < labels.length; j++) {
+        var el = labels[j];
+        if (el.tagName.toLowerCase() === 'text' || el.tagName.toLowerCase() === 'tspan') {
+          el.setAttribute('fill', labelColor);
+          el.style.fill = labelColor;
+        } else {
+          el.style.color = labelColor;
+        }
+      }
+    }
+    // Edge labels sit on the page background, not inside a node.
+    var edgeLabels = out.querySelectorAll('g.edgeLabel text, g.edgeLabel span, g.edgeLabel div');
+    for (var k = 0; k < edgeLabels.length; k++) {
+      var edgeEl = edgeLabels[k];
+      var bg = dark ? '#0d1117' : '#ffffff';
+      if (edgeEl.tagName.toLowerCase() === 'text') {
+        edgeEl.setAttribute('fill', dark ? '#c9d1d9' : '#3d444d');
+      } else {
+        edgeEl.style.color = dark ? '#c9d1d9' : '#3d444d';
+        edgeEl.style.backgroundColor = bg;
+      }
+    }
+  }
+
   window.renderDiagram = function (code, dark) {
     var out = document.getElementById('out');
     out.innerHTML = '';
@@ -71,7 +150,40 @@
       mermaid.initialize({
         startOnLoad: false,
         securityLevel: 'loose',
-        theme: dark ? 'dark' : 'default',
+        theme: 'base',
+        themeVariables: dark ? {
+          background: '#0d1117',
+          primaryColor: '#1f2937',
+          primaryTextColor: '#e6edf3',
+          primaryBorderColor: '#4b5563',
+          lineColor: '#9aa4b2',
+          secondaryColor: '#30363d',
+          tertiaryColor: '#21262d',
+          mainBkg: '#1f2937',
+          nodeBorder: '#4b5563',
+          clusterBkg: '#161b22',
+          clusterBorder: '#30363d',
+          titleColor: '#e6edf3',
+          edgeLabelBackground: '#0d1117',
+          textColor: '#e6edf3',
+          fontSize: '13px'
+        } : {
+          background: '#ffffff',
+          primaryColor: '#eef2f7',
+          primaryTextColor: '#1b1f24',
+          primaryBorderColor: '#c3ccd6',
+          lineColor: '#57606a',
+          secondaryColor: '#f6f8fa',
+          tertiaryColor: '#ffffff',
+          mainBkg: '#eef2f7',
+          nodeBorder: '#c3ccd6',
+          clusterBkg: '#f6f8fa',
+          clusterBorder: '#d8dfe6',
+          titleColor: '#1b1f24',
+          edgeLabelBackground: '#ffffff',
+          textColor: '#1b1f24',
+          fontSize: '13px'
+        },
         fontFamily: '-apple-system, "HarmonyOS Sans", system-ui, sans-serif'
       });
       mermaid.render('d' + Date.now(), code).then(function (result) {
@@ -82,6 +194,7 @@
           svg.style.width = '100%';
           svg.style.height = 'auto';
         }
+        fixContrast(dark);
         settle(0);
       }).catch(function (e) {
         fail('mermaid: ' + (e && e.message ? e.message : String(e)));

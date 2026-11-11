@@ -66,6 +66,11 @@ export default class EntryAbility extends UIAbility {
         w.on('avoidAreaChange', () => {
           publishInsets(w);
         });
+        // Rotation changes the insets without necessarily firing avoidAreaChange, so the size
+        // change is the second cue to re-read them.
+        w.on('windowSizeChange', () => {
+          publishInsets(w);
+        });
       }
     });
   }

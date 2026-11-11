@@ -2,6 +2,7 @@ import hilog from '@ohos.hilog';
 // Entry file: layout and the transient switches only. Everything the shell can do lives
 // in ./model/Session; the session publishes its fields to AppStorage and the panes
 // subscribe to them, so this file never threads data through intermediate props.
+import { common } from '@kit.AbilityKit';
 import { display, window } from '@kit.ArkUI';
 import web_webview from '@ohos.web.webview';
 
@@ -142,10 +143,23 @@ struct Index {
     // Shrinking the page instead of lifting it: with OFFSET the whole surface (header included)
     // slides up when the keyboard opens, which is what made the title look wrong.
     this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+    this.refreshScreenHeight();
+    // Rotating the device changes the height frame() subtracts the inset from; without this the
+    // page keeps the portrait edge and leaves a band at the bottom.
     try {
-      this.screenH = px2vp(display.getDefaultDisplaySync().height);
+      window.getLastWindow(this.getUIContext().getHostContext() as common.UIAbilityContext).then((w) => {
+        // The manifest entry for orientation is not honoured by this build chain, so the window
+        // is told directly. Restricted rather than forced: the system rotation lock still wins.
+        try {
+          w.setPreferredOrientation(window.Orientation.AUTO_ROTATION_RESTRICTED);
+        } catch (e) {
+        }
+        w.on('windowSizeChange', () => {
+          this.refreshScreenHeight();
+        });
+      }).catch(() => {
+      });
     } catch (e) {
-      this.screenH = 0;
     }
     this.session.onChange = () => {
       this.publish();
@@ -200,6 +214,14 @@ struct Index {
 
   // "100%" resolves inside the safe area; the page origin already sits below the status
   // bar, so the frame is the physical height minus that inset.
+  private refreshScreenHeight(): void {
+    try {
+      this.screenH = px2vp(display.getDefaultDisplaySync().height);
+    } catch (e) {
+      this.screenH = 0;
+    }
+  }
+
   private frame(): string | number {
     return this.screenH > 0 ? this.screenH - this.topInset : '100%';
   }

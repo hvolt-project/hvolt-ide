@@ -30,6 +30,8 @@ entry = "EntryAbility.ets"
 device_types = ["phone", "tablet", "2in1"]
 obfuscation = false
 abi_filters = ["arm64-v8a"]
+# Rotation follows the device, but the user's rotation lock still wins.
+orientation = "auto_rotation_restricted"
 
 [[module.permissions]]
 name = "ohos.permission.INTERNET"
