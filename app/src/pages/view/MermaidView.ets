@@ -2,6 +2,7 @@
 // engine; the library and its host page ship inside the package so it works offline.
 
 import webview from '@ohos.web.webview';
+import hilog from '@ohos.hilog';
 import { palette, Palette } from '../model/Palette';
 
 /** Receives the rendered height from the page so the card can size itself. */
@@ -17,7 +18,10 @@ class MermaidBridge {
 export struct MermaidView {
   @Prop dark: boolean = true;
   @Prop code: string = '';
-  @State private height: number = 160;
+  /** Height in vp, reported by the page and clamped between these bounds. */
+  @State private height: number = 88;
+  private static readonly MIN_H: number = 88;
+  private static readonly MAX_H: number = 360;
   private controller: webview.WebviewController = new webview.WebviewController();
   private bridge: MermaidBridge = new MermaidBridge();
   private loaded: boolean = false;
@@ -40,9 +44,22 @@ export struct MermaidView {
   }
 
   aboutToAppear(): void {
-    this.bridge.onHeight = (height: number) => {
-      if (height > 0 && Math.abs(height - this.height) > 2) {
-        this.height = height;
+    // The page reports device pixels; the layout works in vp. Clamping here keeps a tall diagram
+    // from swallowing the transcript and a short one from leaving a hole.
+    this.bridge.onHeight = (px: number) => {
+      if (px <= 0) {
+        return;
+      }
+      hilog.info(0x0000, 'hvoltide', 'mermaid height px=%{public}d', px);
+      let vp = px2vp(px);
+      if (vp < MermaidView.MIN_H) {
+        vp = MermaidView.MIN_H;
+      }
+      if (vp > MermaidView.MAX_H) {
+        vp = MermaidView.MAX_H;
+      }
+      if (Math.abs(vp - this.height) > 1) {
+        this.height = vp;
       }
     };
   }
@@ -62,7 +79,17 @@ export struct MermaidView {
         })
         .onPageEnd(() => {
           this.loaded = true;
+          hilog.info(0x0000, 'hvoltide', 'mermaid page ready');
           this.render();
+        })
+        .onConsole((event) => {
+          hilog.info(0x0000, 'hvoltide', 'mermaid console: %{public}s', event.message.getMessage());
+          return false;
+        })
+        // A diagram taller than the cap scrolls inside its card instead of stretching the list.
+        .nestedScroll({
+          scrollForward: NestedScrollMode.SELF_FIRST,
+          scrollBackward: NestedScrollMode.SELF_FIRST
         })
     }
     .width('100%')
