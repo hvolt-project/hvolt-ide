@@ -10,7 +10,7 @@ import assert from 'node:assert/strict';
 import {
   cellWidth, columnWidths, emptyBlock, highlightCode, isTableDivider, parseMarkdown, plainInline,
   splitRow
-} from '../src/pages/model/Markdown.ts';
+} from '../app/src/pages/model/Markdown.ts';
 
 test('a paragraph keeps its lines together', () => {
   const blocks = parseMarkdown('first line\nsecond line');

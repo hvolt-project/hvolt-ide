@@ -8,6 +8,7 @@ import util from '@ohos.util';
 import { TOOLS } from '../mcp/Registry';
 import { ChatMessage, ToolCall, Usage } from './Types';
 import { LlmConfig } from './Settings';
+import { applyDelta, collectCalls, ToolCallChunk } from './Stream';
 import { chatUrl } from './Models';
 
 export interface StreamSink {
@@ -24,126 +25,6 @@ export interface StreamSink {
 /** Cancellation flag shared with the caller: set `.cancelled` to stop after the current chunk. */
 export class AbortFlag {
   cancelled: boolean = false;
-}
-
-interface ToolCallChunk {
-  index: number;
-  id: string;
-  name: string;
-  argumentsJson: string;
-}
-
-function toolSchema(): Object[] {
-  const out: Object[] = [];
-  for (const spec of TOOLS.descriptors()) {
-    const fn: Record<string, Object> = {
-      'name': spec['name'],
-      'description': spec['description'],
-      'parameters': spec['inputSchema']
-    };
-    const entry: Record<string, Object> = { 'type': 'function', 'function': fn };
-    out.push(entry);
-  }
-  return out;
-}
-
-function toWire(messages: ChatMessage[]): Object[] {
-  const out: Object[] = [];
-  for (const message of messages) {
-    // The runtime block rides with the request but is not part of what the user said.
-    const body = message.context.length > 0 ? message.context + '\n\n' + message.content : message.content;
-    const row: Record<string, Object> = { 'role': message.role, 'content': body };
-    if (message.images.length > 0) {
-      // Multimodal content: the text part plus one image part per attachment.
-      const parts: Object[] = [{ 'type': 'text', 'text': body }];
-      for (const image of message.images) {
-        parts.push({ 'type': 'image_url', 'image_url': { 'url': image } });
-      }
-      row['content'] = parts;
-    }
-    if (message.toolCalls.length > 0) {
-      const calls: Object[] = [];
-      for (const call of message.toolCalls) {
-        const fn: Record<string, Object> = { 'name': call.name, 'arguments': call.argumentsJson };
-        calls.push({ 'id': call.id, 'type': 'function', 'function': fn });
-      }
-      row['tool_calls'] = calls;
-    }
-    if (message.toolCallId.length > 0) {
-      row['tool_call_id'] = message.toolCallId;
-    }
-    out.push(row);
-  }
-  return out;
-}
-
-/** Applies one `data:` payload to the running accumulators. */
-function applyDelta(payload: string, text: string[], calls: Map<number, ToolCallChunk>,
-  sink: StreamSink): string {
-  let parsed: Record<string, Object> | null = null;
-  try {
-    parsed = JSON.parse(payload) as Record<string, Object>;
-  } catch (e) {
-    return text.join('');
-  }
-  const reported = parsed['usage'] as Record<string, Object>;
-  if (reported !== undefined && reported !== null && sink.onUsage !== undefined) {
-    const details = reported['completion_tokens_details'] as Record<string, Object>;
-    sink.onUsage({
-      promptTokens: reported['prompt_tokens'] === undefined ? 0 : reported['prompt_tokens'] as number,
-      completionTokens: reported['completion_tokens'] === undefined ? 0 : reported['completion_tokens'] as number,
-      totalTokens: reported['total_tokens'] === undefined ? 0 : reported['total_tokens'] as number,
-      reasoningTokens: details === undefined ? 0 :
-        (details['reasoning_tokens'] === undefined ? 0 : details['reasoning_tokens'] as number)
-    });
-  }
-  const choices = parsed['choices'] as Object[];
-  if (choices === undefined || choices.length === 0) {
-    return text.join('');
-  }
-  const first = choices[0] as Record<string, Object>;
-  const delta = first['delta'] as Record<string, Object>;
-  if (delta === undefined) {
-    return text.join('');
-  }
-  const thought = delta['reasoning_content'] !== undefined ? delta['reasoning_content'] : delta['reasoning'];
-  if (thought !== undefined && thought !== null && sink.onThought !== undefined) {
-    const piece = thought as string;
-    if (piece.length > 0) {
-      sink.onThought(piece);
-    }
-  }
-  const content = delta['content'];
-  if (content !== undefined && content !== null) {
-    const piece = content as string;
-    text.push(piece);
-    sink.onText(piece);
-  }
-  const rawCalls = delta['tool_calls'] as Object[];
-  if (rawCalls !== undefined) {
-    for (const raw of rawCalls) {
-      const part = raw as Record<string, Object>;
-      const index = part['index'] === undefined ? 0 : part['index'] as number;
-      let running = calls.get(index);
-      if (running === undefined) {
-        running = { index: index, id: '', name: '', argumentsJson: '' };
-        calls.set(index, running);
-      }
-      const fn = part['function'] as Record<string, Object>;
-      if (part['id'] !== undefined && part['id'] !== null) {
-        running.id = part['id'] as string;
-      }
-      if (fn !== undefined) {
-        if (fn['name'] !== undefined && fn['name'] !== null) {
-          running.name = fn['name'] as string;
-        }
-        if (fn['arguments'] !== undefined && fn['arguments'] !== null) {
-          running.argumentsJson += fn['arguments'] as string;
-        }
-      }
-    }
-  }
-  return text.join('');
 }
 
 export async function streamChat(config: LlmConfig, messages: ChatMessage[], sink: StreamSink,
@@ -206,15 +87,9 @@ export async function streamChat(config: LlmConfig, messages: ChatMessage[], sin
       connectTimeout: 30000,
       readTimeout: 120000
     });
-    calls.forEach((chunk: ToolCallChunk) => {
-      if (chunk.name.length > 0) {
-        sink.onToolCall({
-          id: chunk.id.length > 0 ? chunk.id : 'call_' + chunk.index,
-          name: chunk.name,
-          argumentsJson: chunk.argumentsJson.length > 0 ? chunk.argumentsJson : '{}'
-        });
-      }
-    });
+    for (const call of collectCalls(calls)) {
+      sink.onToolCall(call);
+    }
     if (!finished && carry.trim().length > 0 && carry.trim().startsWith('data:')) {
       const payload = carry.trim().substring(5).trim();
       if (payload !== '[DONE]') {
