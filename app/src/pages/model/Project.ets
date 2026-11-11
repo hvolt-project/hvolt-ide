@@ -3,6 +3,7 @@ import { picker } from '@kit.CoreFileKit';
 import { ensureDir } from './Stage';
 import { lastSegment } from './Util';
 import { hvolt, hvoltArgv } from './Hvolt';
+import { parseBundle } from './Commands';
 
 export const STAGE_ROOT: string = getContext().filesDir + '/stage';
 
@@ -65,8 +66,7 @@ export async function createProject(name: string): Promise<string> {
 export function projectBundle(name: string, fallback: string): string {
   try {
     const text = fs.readTextSync(projectDir(name) + '/hvolt.toml');
-    const m = /bundle = "([^"]*)"/.exec(text);
-    return m === null ? fallback : m[1];
+    return parseBundle(text, fallback);
   } catch (e) {
     return fallback;
   }

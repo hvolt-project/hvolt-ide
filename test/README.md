@@ -12,6 +12,7 @@ node --test test/
 | `markdown.test.ts` | `app/src/pages/model/Markdown.ts` — blocks, tables, inline markers, code tokenising |
 | `stream.test.ts` | `app/src/pages/harness/loop/Stream.ts` — SSE framing, deltas, tool-call accumulation |
 | `format.test.ts` | `app/src/pages/model/Format.ts` — failure line selection, turn summary, rolling log |
+| `commands.test.ts` | `app/src/pages/model/Commands.ts` — argv shapes and the hvolt.toml bundle field |
 
 Two constraints shape these files:
 

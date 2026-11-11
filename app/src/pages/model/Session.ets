@@ -6,6 +6,10 @@ import web_webview from '@ohos.web.webview';
 import { Bp, EditorBridge, setEditorHandlers, setPendingText } from './Bridge';
 import { withLine } from './Util';
 import { firstLine, mergeTail, statLine } from './Format';
+import {
+  argvAbcRecords, argvAgcLoginCallback, argvAgcLoginUrl, argvAgcLoginWait, argvAgcWhoami, argvBuild,
+  argvLog, argvPush, argvSign, argvStart, argvVersion
+} from './Commands';
 import { FILES, PROJ, listSources, stageProject } from './Stage';
 import { SELF_HDC, hvolt, hvoltArgv, HvoltResult } from './Hvolt';
 import {
@@ -318,7 +322,7 @@ export class Session {
     AppStorage.setOrCreate('ide.devices', this.devices);
     AppStorage.setOrCreate('appearance', Number(await readPref('appearance', '0')));
     AppStorage.setOrCreate('autodeploy', await readPref('autodeploy', '0'));
-    const v = hvolt(hvoltArgv(['--version']), FILES, FILES);
+    const v = hvolt(hvoltArgv(argvVersion()), FILES, FILES);
     this.version = v.code === 0 ? v.output.trim() : 'hvolt 不可用';
     this.pendingTabs = JSON.parse(await readPref('session.tabs', '[]')) as string[];
     this.pendingCurrent = await readPref('session.current', '');
@@ -1046,7 +1050,7 @@ export class Session {
     this.hlog = '读取中…';
     this.onChange();
     const tail = AppStorage.get<number>(KEY_TAIL) ?? 120;
-    const argv = ['log', '-d', this.device, '--bundle', this.bundleId(), '--tail', '' + tail];
+    const argv = argvLog(this.device, this.bundleId(), tail);
     hvoltAsync(argv, FILES, FILES, (raw: string) => {
       try {
         const r = this.fromEnvelope(raw);
@@ -1106,7 +1110,7 @@ export class Session {
       return;
     }
     const want = this.current;
-    hvoltAsync(['abc-records', abc], this.dir(), FILES, (raw: string) => {
+    hvoltAsync(argvAbcRecords(abc), this.dir(), FILES, (raw: string) => {
       const r = this.fromEnvelope(raw);
       if (r.code !== 0) {
         this.outline = [];
@@ -1181,7 +1185,7 @@ export class Session {
     // Waits for the write: starting the build while the buffer was still being written made
     // the compiler read the previous file contents.
     this.flushThen(() => {
-      hvoltAsync(['build'], this.dir(), FILES, (raw: string) => {
+      hvoltAsync(argvBuild(), this.dir(), FILES, (raw: string) => {
         const r = this.fromEnvelope(raw);
         this.end(r, '已构建', '构建失败');
         onBuild(r.code);
@@ -1215,7 +1219,7 @@ export class Session {
   private deployAfterFlush(): void {
     this.statusText = '准备签名材料';
     this.onChange();
-    hvoltAsync(['sign'], this.dir(), FILES, (prepared: string) => {
+    hvoltAsync(argvSign(), this.dir(), FILES, (prepared: string) => {
       const prep = this.fromEnvelope(prepared);
       if (prep.code !== 0) {
         this.end(prep, '已部署', '签名材料失败');
@@ -1223,7 +1227,7 @@ export class Session {
       }
       this.statusText = '构建中';
       this.onChange();
-      hvoltAsync(['build'], this.dir(), FILES, (built: string) => {
+      hvoltAsync(argvBuild(), this.dir(), FILES, (built: string) => {
         const b = this.fromEnvelope(built);
         if (b.code !== 0) {
           this.end(b, '已部署', '构建失败');
@@ -1241,7 +1245,7 @@ export class Session {
           return;
         }
         // Install only: launching the app is the user's call, not a side effect of deploying.
-        hvoltAsync(['push', this.device, '--hap', hap], this.dir(), FILES, (ran: string) => {
+        hvoltAsync(argvPush(this.device, hap), this.dir(), FILES, (ran: string) => {
           this.end(this.fromEnvelope(ran), '已部署', '部署失败');
         });
       });
@@ -1317,7 +1321,7 @@ export class Session {
       this.onChange();
       return;
     }
-    hvoltAsync(['push', this.device, '--hap', hap], this.dir(), FILES, (raw: string) => {
+    hvoltAsync(argvPush(this.device, hap), this.dir(), FILES, (raw: string) => {
       this.end(this.fromEnvelope(raw), '已安装', '安装失败');
     });
   }
@@ -1326,7 +1330,7 @@ export class Session {
     if (!this.begin('启动中')) {
       return;
     }
-    hvoltAsync(['start', this.bundleId() + '/EntryAbility', '-d', this.device], this.dir(), FILES,
+    hvoltAsync(argvStart(this.bundleId(), this.device), this.dir(), FILES,
       (raw: string) => {
         this.end(this.fromEnvelope(raw), '已启动', '启动失败');
       });
@@ -1367,7 +1371,7 @@ export class Session {
   loginAgc(): void {
     this.agcState = '获取授权地址…';
     this.onChange();
-    hvoltAsync(['agc', 'login', '--print-url'], FILES, FILES, (raw: string) => {
+    hvoltAsync(argvAgcLoginUrl(), FILES, FILES, (raw: string) => {
       const r = this.fromEnvelope(raw);
       // The captured stdout can carry noise from other threads, so the JSON is picked out
       // by its first brace rather than parsed off the whole string.
@@ -1386,7 +1390,7 @@ export class Session {
       this.onChange();
       // The page redirects to this device's own loopback, so the listener runs here and
       // only the page is shown in the WebView.
-      hvoltAsync(['agc', 'login', '--wait', '' + port], FILES, FILES, (done: string) => {
+      hvoltAsync(argvAgcLoginWait(port), FILES, FILES, (done: string) => {
         const finished = this.fromEnvelope(done);
         this.agcUrl = '';
         this.append(finished.output.trim());
@@ -1401,7 +1405,7 @@ export class Session {
     this.agcUrl = '';
     this.agcState = '换取 token…';
     this.onChange();
-    hvoltAsync(['agc', 'login', '--callback', callbackUrl], FILES, FILES, (raw: string) => {
+    hvoltAsync(argvAgcLoginCallback(callbackUrl), FILES, FILES, (raw: string) => {
       const r = this.fromEnvelope(raw);
       this.append(r.output.trim());
       this.queryAgc();
@@ -1424,7 +1428,7 @@ export class Session {
   }
 
   queryAgc(): void {
-    hvoltAsync(['agc', 'whoami'], FILES, FILES, (raw: string) => {
+    hvoltAsync(argvAgcWhoami(), FILES, FILES, (raw: string) => {
       const r = this.fromEnvelope(raw);
       const text = r.output;
       const at = text.indexOf('User ID:');

@@ -1,5 +1,8 @@
 import { FILES } from './Stage';
 import { deviceLogs, hvolt, hvoltArgv } from './Hvolt';
+import {
+  argvBuild, argvConnect, argvDeviceList, argvPush, argvRun, argvStart
+} from './Commands';
 
 export interface ActionResult {
   code: number;
@@ -17,34 +20,34 @@ function timed(argv: string, cwd: string): ActionResult {
 // hvolt runs inside the app, so each action is one blocking call that already knows
 // its outcome; there is no job to poll and nothing to guess.
 export function runBuild(proj: string): ActionResult {
-  return timed('["build"]', proj);
+  return timed(JSON.stringify(argvBuild()), proj);
 }
 
 // Build, sign, install and launch in one command — the toolchain's own self-install
 // path, so the shell does not have to keep four steps in sync by hand.
 export function runDeploy(proj: string, device: string): ActionResult {
-  return timed(JSON.stringify(['run', device]), proj);
+  return timed(JSON.stringify(argvRun(device)), proj);
 }
 
 export function runInstall(proj: string, device: string): ActionResult {
   const hap = proj + '/build/entry-signed.hap';
-  return timed(JSON.stringify(['push', device, '--hap', hap]), proj);
+  return timed(JSON.stringify(argvPush(device, hap)), proj);
 }
 
 export function runStart(proj: string, device: string, bundle: string): ActionResult {
-  return timed(JSON.stringify(['start', bundle + '/EntryAbility', '-d', device]), proj);
+  return timed(JSON.stringify(argvStart(bundle, device)), proj);
 }
 
 // The device reaches its own hdcd over loopback; `device connect` is what registers
 // that address as the active install target, and the answer says so in plain words.
 export function connectDevice(device: string): ActionResult {
-  return timed(JSON.stringify(['device', 'connect', device]), FILES);
+  return timed(JSON.stringify(argvConnect(device)), FILES);
 }
 
 // The toolchain already knows which devices it can reach; the sheet shows that list
 // instead of keeping its own idea of what is connected.
 export function listDevices(): ActionResult {
-  return timed('["device","list"]', FILES);
+  return timed(JSON.stringify(argvDeviceList()), FILES);
 }
 
 export function whoami(): ActionResult {
