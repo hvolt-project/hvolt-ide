@@ -13,6 +13,7 @@ node --test test/
 | `stream.test.ts` | `app/src/pages/harness/loop/Stream.ts` — SSE framing, deltas, tool-call accumulation |
 | `format.test.ts` | `app/src/pages/model/Format.ts` — failure line selection, turn summary, rolling log |
 | `commands.test.ts` | `app/src/pages/model/Commands.ts` — argv shapes and the hvolt.toml bundle field |
+| `complete.test.ts` | `app/src/pages/model/Complete.ts` — `/` and `@` completion rules |
 
 Two constraints shape these files:
 

@@ -7,6 +7,7 @@ import { AsrSession } from '../harness/asr/Asr';
 import { photoAccessHelper } from '@kit.MediaLibraryKit';
 import fs from '@ohos.file.fs';
 import util from '@ohos.util';
+import { applySuggestion, suggestFor, Suggestion } from '../model/Complete';
 
 export { ChatKind, ChatLine, FoldMode } from './ChatBlocks';
 
@@ -143,25 +144,9 @@ export struct ChatPanel {
 
   /** Completes the token being typed: commands after /, project files after @. */
   private refreshSuggest(draft: string): void {
-    const text = draft.trimStart();
-    if (text.startsWith('/')) {
-      const commands = ['/reset', '/clear', '/help'];
-      const typed = text.toLowerCase();
-      this.suggestKind = 'cmd';
-      this.suggest = commands.filter((c: string) => c.startsWith(typed) && c !== typed);
-      return;
-    }
-    const at = text.lastIndexOf('@');
-    if (at >= 0 && !text.substring(at).includes(' ')) {
-      const typed = text.substring(at + 1).toLowerCase();
-      this.suggestKind = 'file';
-      this.suggest = this.files
-        .filter((f: string) => f.toLowerCase().includes(typed))
-        .slice(0, 8);
-      return;
-    }
-    this.suggest = [];
-    this.suggestKind = '';
+    const found: Suggestion = suggestFor(draft, this.files);
+    this.suggestKind = found.kind;
+    this.suggest = found.items;
   }
 
   private commandHint(item: string): string {
@@ -175,12 +160,7 @@ export struct ChatPanel {
   }
 
   private accept(item: string): void {
-    if (this.suggestKind === 'cmd') {
-      this.draft = item;
-    } else {
-      const at = this.draft.lastIndexOf('@');
-      this.draft = at >= 0 ? this.draft.substring(0, at) + '@' + item + ' ' : this.draft + item;
-    }
+    this.draft = applySuggestion(this.draft, this.suggestKind, item);
     this.suggest = [];
     this.suggestKind = '';
   }
