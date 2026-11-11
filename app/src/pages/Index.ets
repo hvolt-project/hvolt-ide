@@ -423,6 +423,95 @@ struct Index {
     return false;
   }
 
+  /** Closing a dirty tab asks first: saving, discarding, or leaving it alone. */
+  private requestCloseTab(rel: string): void {
+    if (!this.session.isDirtyTab(rel)) {
+      this.session.closeTab(rel);
+      return;
+    }
+    ActionSheet.show({
+      title: '「' + rel + '」有未保存的改动',
+      message: '',
+      autoCancel: true,
+      confirm: {
+        value: '保存并关闭',
+        action: () => {
+          this.session.closeTabSaving(rel);
+        }
+      },
+      sheets: [
+        {
+          title: '不保存',
+          action: () => {
+            this.session.discardTab(rel);
+          }
+        }
+      ],
+      cancel: () => {
+      }
+    });
+  }
+
+  /** Toolbar and breadcrumb: the strip that stays put above every pane. */
+  @Builder
+  Chrome() {
+    Row() {
+      Column() {
+        TopBar({
+      dark: this.isDark(),
+      showToggle: this.bp !== 'expanded',
+      onToggle: () => {
+        animateTo({ duration: DURATION, curve: spring() }, () => {
+          this.leftOpen = !this.leftOpen;
+        });
+      },
+      onSelect: (rel: string) => {
+        this.session.openFile(rel);
+      },
+      onClose: (rel: string) => {
+        this.requestCloseTab(rel);
+      },
+      onBuild: () => {
+        this.buildProject();
+      },
+      onInstall: () => {
+        this.session.deploy();
+      },
+      onStart: () => {
+        this.session.launch();
+      }
+        })
+
+        Row({ space: 6 }) {
+          ForEach(this.crumbs(), (seg: string, i: number) => {
+            if (i > 0) {
+              Text('›')
+                .fontSize(11)
+                .fontColor(this.p().textTertiary)
+            }
+            Text(seg)
+              .fontSize(11)
+              .fontColor(i === 0 ? this.p().textSecondary : this.p().textTertiary)
+              .maxLines(1)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+          }, (seg: string, i: number) => i.toString() + seg)
+        }
+        .width('100%')
+        .height(22)
+        .padding({ left: 14, right: 14 })
+        .alignItems(VerticalAlign.Center)
+        .backgroundColor(this.p().bg)
+      }
+      .width('100%')
+    }
+    .width('100%')
+    .height(this.chromeHidden ? 0 : 62)
+    .opacity(this.chromeHidden ? 0 : 1)
+    .clip(true)
+    .animation({ duration: DURATION, curve: Curve.FastOutSlowIn })
+  }
+
+
   build() {
     Stack({ alignContent: Alignment.TopStart }) {
       Column()
@@ -431,85 +520,7 @@ struct Index {
         .backgroundColor(this.p().bg)
 
       Column() {
-        Row() {
-          Column() {
-            TopBar({
-          dark: this.isDark(),
-          showToggle: this.bp !== 'expanded',
-          onToggle: () => {
-            animateTo({ duration: DURATION, curve: spring() }, () => {
-              this.leftOpen = !this.leftOpen;
-            });
-          },
-          onSelect: (rel: string) => {
-            this.session.openFile(rel);
-          },
-          onClose: (rel: string) => {
-            if (!this.session.isDirtyTab(rel)) {
-              this.session.closeTab(rel);
-              return;
-            }
-            // Three answers, so the unsaved text is never dropped without a choice.
-            ActionSheet.show({
-              title: '「' + rel + '」有未保存的改动',
-              message: '',
-              autoCancel: true,
-              confirm: {
-                value: '保存并关闭',
-                action: () => {
-                  this.session.closeTabSaving(rel);
-                }
-              },
-              sheets: [
-                {
-                  title: '不保存',
-                  action: () => {
-                    this.session.discardTab(rel);
-                  }
-                }
-              ],
-              cancel: () => {
-              }
-            });
-          },
-          onBuild: () => {
-            this.buildProject();
-          },
-          onInstall: () => {
-            this.session.deploy();
-          },
-          onStart: () => {
-            this.session.launch();
-          }
-            })
-
-            Row({ space: 6 }) {
-              ForEach(this.crumbs(), (seg: string, i: number) => {
-                if (i > 0) {
-                  Text('›')
-                    .fontSize(11)
-                    .fontColor(this.p().textTertiary)
-                }
-                Text(seg)
-                  .fontSize(11)
-                  .fontColor(i === 0 ? this.p().textSecondary : this.p().textTertiary)
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-              }, (seg: string, i: number) => i.toString() + seg)
-            }
-            .width('100%')
-            .height(22)
-            .padding({ left: 14, right: 14 })
-            .alignItems(VerticalAlign.Center)
-            .backgroundColor(this.p().bg)
-          }
-          .width('100%')
-        }
-        .width('100%')
-        .height(this.chromeHidden ? 0 : 62)
-        .opacity(this.chromeHidden ? 0 : 1)
-        .clip(true)
-        .animation({ duration: DURATION, curve: Curve.FastOutSlowIn })
+      this.Chrome()
 
         Row() {
           if (this.bp === 'expanded') {

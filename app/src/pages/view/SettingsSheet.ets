@@ -397,6 +397,213 @@ export struct SettingsSheet {
     this.onOptions();
   }
 
+  /** One settings group, extracted from build() with its content unchanged. */
+  @Builder
+  EndpointSection() {
+      Column({ space: 8 }) {
+        Text('接口地址')
+          .fontSize(15)
+          .fontColor(this.p().textPrimary)
+          .width('100%')
+        TextInput({ text: $$this.llmBase, placeholder: 'https://api.deepseek.com/v1' })
+          .height(40)
+          .width('100%')
+          .fontSize(14)
+          .fontColor(this.p().textPrimary)
+          .placeholderColor(this.p().textTertiary)
+          .backgroundColor(this.p().bg)
+          .borderRadius(10)
+          .padding({ left: 12, right: 12 })
+          .onChange(() => {
+            this.persistLlm();
+          })
+          .onBlur(() => {
+            this.fetchModels();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .borderRadius(14)
+      .backgroundColor(this.p().card)
+  }
+
+  /** One settings group, extracted from build() with its content unchanged. */
+  @Builder
+  ModelSection() {
+      Column({ space: 8 }) {
+        Row() {
+          Text('模型')
+            .fontSize(15)
+            .fontColor(this.p().textPrimary)
+          Blank()
+          Text(this.modelState)
+            .fontSize(12)
+            .fontColor(this.p().textTertiary)
+        }
+        .width('100%')
+
+        Select(this.modelOptions.length > 0 ? this.modelOptions :
+          [{ value: this.llmModel.length > 0 ? this.llmModel : '—' }])
+          .selected(this.modelIndex)
+          .value(this.llmModel.length > 0 ? this.llmModel : '—')
+          .font({ size: 14 })
+          .fontColor(this.p().textPrimary)
+          .backgroundColor(this.p().bg)
+          .borderRadius(10)
+          .enabled(this.modelOptions.length > 0)
+          .width('100%')
+          .height(40)
+          .onSelect((index: number, value: string) => {
+            this.modelIndex = index;
+            this.llmModel = value;
+            this.persistLlm();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .borderRadius(14)
+      .backgroundColor(this.p().card)
+  }
+
+  /** One settings group, extracted from build() with its content unchanged. */
+  @Builder
+  KeySection() {
+      Column({ space: 8 }) {
+        Text('密钥')
+          .fontSize(15)
+          .fontColor(this.p().textPrimary)
+          .width('100%')
+        TextInput({ text: $$this.llmToken, placeholder: 'API key' })
+          .type(InputType.Password)
+          .height(40)
+          .width('100%')
+          .fontSize(14)
+          .fontColor(this.p().textPrimary)
+          .placeholderColor(this.p().textTertiary)
+          .backgroundColor(this.p().bg)
+          .borderRadius(10)
+          .padding({ left: 12, right: 12 })
+          .onChange(() => {
+            this.persistLlm();
+          })
+          .onBlur(() => {
+            this.fetchModels();
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .borderRadius(14)
+      .backgroundColor(this.p().card)
+  }
+
+  /** One settings group, extracted from build() with its content unchanged. */
+  @Builder
+  EffortSection() {
+      Column({ space: 8 }) {
+        Row() {
+          Text('思考强度')
+            .fontSize(15)
+            .fontColor(this.p().textPrimary)
+          Blank()
+          Text('默认不传')
+            .fontSize(12)
+            .fontColor(this.p().textTertiary)
+        }
+        .width('100%')
+
+        Row({ space: 8 }) {
+          ForEach([['', '默认'], ['low', '低'], ['medium', '中'], ['high', '高']],
+            (pair: string[]) => {
+              Text(pair[1])
+                .fontSize(13)
+                .fontColor(this.llmEffort === pair[0] ? this.p().textPrimary : this.p().textSecondary)
+                .height(34)
+                .layoutWeight(1)
+                .textAlign(TextAlign.Center)
+                .backgroundColor(this.llmEffort === pair[0] ? this.p().brandSoft : this.p().bg)
+                .borderRadius(8)
+                .onClick(() => {
+                  this.llmEffort = pair[0];
+                  this.persistLlm();
+                })
+            }, (pair: string[]) => pair[0] + pair[1])
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .borderRadius(14)
+      .backgroundColor(this.p().card)
+  }
+
+  /** One settings group, extracted from build() with its content unchanged. */
+  @Builder
+  StepsSection() {
+      Column({ space: 8 }) {
+        Row() {
+          Text('工作步骤')
+            .fontSize(15)
+            .fontColor(this.p().textPrimary)
+          Blank()
+          Text('思考与工具调用如何显示')
+            .fontSize(12)
+            .fontColor(this.p().textTertiary)
+        }
+        .width('100%')
+
+        Row({ space: 6 }) {
+          ForEach([['quiet', '简洁'], ['normal', '标准'], ['detail', '详细'], ['full', '完全展开']],
+            (pair: string[]) => {
+              Text(pair[1])
+                .fontSize(12)
+                .fontColor(this.chatMode === pair[0] ? this.p().textPrimary : this.p().textSecondary)
+                .height(34)
+                .layoutWeight(1)
+                .textAlign(TextAlign.Center)
+                .backgroundColor(this.chatMode === pair[0] ? this.p().brandSoft : this.p().bg)
+                .borderRadius(8)
+                .onClick(() => {
+                  this.chatMode = pair[0];
+                  AppStorage.setOrCreate<string>('chatmode', pair[0]);
+                })
+            }, (pair: string[]) => pair[0] + pair[1])
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .borderRadius(14)
+      .backgroundColor(this.p().card)
+  }
+
+  /** One settings group, extracted from build() with its content unchanged. */
+  @Builder
+  ExtraSection() {
+      Column({ space: 8 }) {
+        Text('附加指令')
+          .fontSize(15)
+          .fontColor(this.p().textPrimary)
+          .width('100%')
+        TextArea({ text: $$this.extraPrompt, placeholder: '例如：改完代码先跑 build 再回复我' })
+          .width('100%')
+          .height(88)
+          .fontSize(14)
+          .fontColor(this.p().textPrimary)
+          .placeholderColor(this.p().textTertiary)
+          .backgroundColor(this.p().bg)
+          .borderRadius(10)
+          .padding(12)
+          .onChange(() => {
+            saveExtraInstructions(this.extraPrompt);
+          })
+      }
+      .width('100%')
+      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
+      .borderRadius(14)
+      .backgroundColor(this.p().card)
+  }
+
+
   build() {
     Column() {
       Row({ space: 8 }) {
@@ -422,187 +629,17 @@ export struct SettingsSheet {
       Scroll() {
         Column({ space: 8 }) {
           this.Section('模型接入')
-          Column({ space: 8 }) {
-            Text('接口地址')
-              .fontSize(15)
-              .fontColor(this.p().textPrimary)
-              .width('100%')
-            TextInput({ text: $$this.llmBase, placeholder: 'https://api.deepseek.com/v1' })
-              .height(40)
-              .width('100%')
-              .fontSize(14)
-              .fontColor(this.p().textPrimary)
-              .placeholderColor(this.p().textTertiary)
-              .backgroundColor(this.p().bg)
-              .borderRadius(10)
-              .padding({ left: 12, right: 12 })
-              .onChange(() => {
-                this.persistLlm();
-              })
-              .onBlur(() => {
-                this.fetchModels();
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-          .borderRadius(14)
-          .backgroundColor(this.p().card)
+          this.EndpointSection()
 
-          Column({ space: 8 }) {
-            Row() {
-              Text('模型')
-                .fontSize(15)
-                .fontColor(this.p().textPrimary)
-              Blank()
-              Text(this.modelState)
-                .fontSize(12)
-                .fontColor(this.p().textTertiary)
-            }
-            .width('100%')
+          this.ModelSection()
 
-            Select(this.modelOptions.length > 0 ? this.modelOptions :
-              [{ value: this.llmModel.length > 0 ? this.llmModel : '—' }])
-              .selected(this.modelIndex)
-              .value(this.llmModel.length > 0 ? this.llmModel : '—')
-              .font({ size: 14 })
-              .fontColor(this.p().textPrimary)
-              .backgroundColor(this.p().bg)
-              .borderRadius(10)
-              .enabled(this.modelOptions.length > 0)
-              .width('100%')
-              .height(40)
-              .onSelect((index: number, value: string) => {
-                this.modelIndex = index;
-                this.llmModel = value;
-                this.persistLlm();
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-          .borderRadius(14)
-          .backgroundColor(this.p().card)
+          this.KeySection()
 
-          Column({ space: 8 }) {
-            Text('密钥')
-              .fontSize(15)
-              .fontColor(this.p().textPrimary)
-              .width('100%')
-            TextInput({ text: $$this.llmToken, placeholder: 'API key' })
-              .type(InputType.Password)
-              .height(40)
-              .width('100%')
-              .fontSize(14)
-              .fontColor(this.p().textPrimary)
-              .placeholderColor(this.p().textTertiary)
-              .backgroundColor(this.p().bg)
-              .borderRadius(10)
-              .padding({ left: 12, right: 12 })
-              .onChange(() => {
-                this.persistLlm();
-              })
-              .onBlur(() => {
-                this.fetchModels();
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-          .borderRadius(14)
-          .backgroundColor(this.p().card)
+          this.EffortSection()
 
-          Column({ space: 8 }) {
-            Row() {
-              Text('思考强度')
-                .fontSize(15)
-                .fontColor(this.p().textPrimary)
-              Blank()
-              Text('默认不传')
-                .fontSize(12)
-                .fontColor(this.p().textTertiary)
-            }
-            .width('100%')
+          this.StepsSection()
 
-            Row({ space: 8 }) {
-              ForEach([['', '默认'], ['low', '低'], ['medium', '中'], ['high', '高']],
-                (pair: string[]) => {
-                  Text(pair[1])
-                    .fontSize(13)
-                    .fontColor(this.llmEffort === pair[0] ? this.p().textPrimary : this.p().textSecondary)
-                    .height(34)
-                    .layoutWeight(1)
-                    .textAlign(TextAlign.Center)
-                    .backgroundColor(this.llmEffort === pair[0] ? this.p().brandSoft : this.p().bg)
-                    .borderRadius(8)
-                    .onClick(() => {
-                      this.llmEffort = pair[0];
-                      this.persistLlm();
-                    })
-                }, (pair: string[]) => pair[0] + pair[1])
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-          .borderRadius(14)
-          .backgroundColor(this.p().card)
-
-          Column({ space: 8 }) {
-            Row() {
-              Text('工作步骤')
-                .fontSize(15)
-                .fontColor(this.p().textPrimary)
-              Blank()
-              Text('思考与工具调用如何显示')
-                .fontSize(12)
-                .fontColor(this.p().textTertiary)
-            }
-            .width('100%')
-
-            Row({ space: 6 }) {
-              ForEach([['quiet', '简洁'], ['normal', '标准'], ['detail', '详细'], ['full', '完全展开']],
-                (pair: string[]) => {
-                  Text(pair[1])
-                    .fontSize(12)
-                    .fontColor(this.chatMode === pair[0] ? this.p().textPrimary : this.p().textSecondary)
-                    .height(34)
-                    .layoutWeight(1)
-                    .textAlign(TextAlign.Center)
-                    .backgroundColor(this.chatMode === pair[0] ? this.p().brandSoft : this.p().bg)
-                    .borderRadius(8)
-                    .onClick(() => {
-                      this.chatMode = pair[0];
-                      AppStorage.setOrCreate<string>('chatmode', pair[0]);
-                    })
-                }, (pair: string[]) => pair[0] + pair[1])
-            }
-            .width('100%')
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-          .borderRadius(14)
-          .backgroundColor(this.p().card)
-
-          Column({ space: 8 }) {
-            Text('附加指令')
-              .fontSize(15)
-              .fontColor(this.p().textPrimary)
-              .width('100%')
-            TextArea({ text: $$this.extraPrompt, placeholder: '例如：改完代码先跑 build 再回复我' })
-              .width('100%')
-              .height(88)
-              .fontSize(14)
-              .fontColor(this.p().textPrimary)
-              .placeholderColor(this.p().textTertiary)
-              .backgroundColor(this.p().bg)
-              .borderRadius(10)
-              .padding(12)
-              .onChange(() => {
-                saveExtraInstructions(this.extraPrompt);
-              })
-          }
-          .width('100%')
-          .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-          .borderRadius(14)
-          .backgroundColor(this.p().card)
+          this.ExtraSection()
 
           this.Section('SDK')
           this.StatusRow('内置 SDK 目录', this.sdkState())
