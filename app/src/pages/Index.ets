@@ -13,15 +13,11 @@ import { Bp } from './model/Bridge';
 import { Session } from './model/Session';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
-import { ChromeBar } from './view/ChromeBar';
-import { ActivityBar } from './view/ActivityBar';
-import { LeftPane } from './view/SidePanes';
-import { BottomDock } from './view/BottomDock';
+import { IdeFace } from './view/IdeFace';
 import { ChatPanel, ChatLine } from './view/ChatPanel';
 import { makeLine } from './view/ChatBlocks';
 import { setChatHandler } from './model/Bridge';
 import { LlmConfig, loadLlmConfig } from './harness/loop/Settings';
-import { EditorArea } from './view/EditorArea';
 import { SettingsSheet } from './view/SettingsSheet';
 import { providerOf } from './harness/loop/Urls';
 
@@ -618,193 +614,38 @@ struct Index {
         .height('100%')
         .backgroundColor(this.p().bg)
 
-      Column() {
-        ChromeBar({
-          dark: this.isDark(),
-          showToggle: this.bp !== 'expanded',
-          onToggle: () => {
-            animateTo({ duration: DURATION, curve: spring() }, () => {
-              this.leftOpen = !this.leftOpen;
-            });
-          },
-          onSelectTab: (rel: string) => {
-            this.session.openFile(rel);
-          },
-          onCloseTab: (rel: string) => {
-            this.requestCloseTab(rel);
-          },
-          onBuild: () => {
-            this.buildProject();
-          },
-          onInstall: () => {
-            this.session.deploy();
-          },
-          onStart: () => {
-            this.session.launch();
-          }
-        })
-
-        Row() {
-          if (this.bp === 'expanded') {
-            ActivityBar({
-              dark: this.isDark(),
-              onChat: () => {
-                this.flipTo(true);
-              },
-              onSettings: () => {
-                animateTo({ duration: DURATION, curve: spring() }, () => {
-                  this.showSettings = true;
-                });
-              }
-            })
-          }
-
-          if (this.bp !== 'compact') {
-            LeftPane({
-              dark: this.isDark(),
-              onChat: () => {
-                this.flipTo(true);
-              },
-              paneWidth: this.bp === 'medium' ? 240 : 260,
-              onOpen: (rel: string) => {
-                this.session.openFile(rel);
-              },
-              onCreate: (name: string) => {
-                this.session.createProjectNamed(name);
-              },
-              onSwitch: (name: string) => {
-                this.session.openProject(name);
-              },
-              onOpenDir: () => {
-                this.session.importProjectDir();
-              },
-              onSettings: () => {
-                this.showSettings = true;
-              },
-              onRefresh: () => {
-                this.session.rescan();
-              },
-              onDeleteFile: (rel: string) => {
-                this.session.deleteTreeFile(rel);
-              },
-              onCreateFile: (dirRel: string, fileName: string) => {
-                this.session.createFileIn(dirRel, fileName);
-              },
-              onImportFiles: (dirRel: string) => {
-                this.session.importFilesInto(dirRel);
-              }
-            })
-              .margin({ left: GAP, top: GAP, bottom: GAP })
-          }
-
-        EditorArea({
-          dark: this.isDark(),
-          compact: this.bp === 'compact',
-          leftOpen: $leftOpen,
-          rightOpen: $rightOpen,
-          controller: this.session.controller,
-          bridge: this.session.bridge,
-          onOpen: (rel: string) => {
-            this.session.openFile(rel);
-          },
-          onCreate: (name: string) => {
-            this.session.createProjectNamed(name);
-          },
-          onSwitch: (name: string) => {
-            this.session.openProject(name);
-          },
-          onOpenProject: () => {
-            this.session.importProjectDir();
-          },
-          onCloseProject: () => {
-            if (!this.session.hasDirtyCurrent()) {
-              this.session.closeProject();
-              return;
-            }
-            ActionSheet.show({
-              title: '「' + this.session.current + '」有未保存的改动',
-              message: '',
-              autoCancel: true,
-              confirm: {
-                value: '保存并关闭工程',
-                action: () => {
-                  this.session.closeProjectSaving();
-                }
-              },
-              sheets: [
-                {
-                  title: '不保存并关闭',
-                  action: () => {
-                    this.session.closeProject();
-                  }
-                }
-              ],
-              cancel: () => {
-              }
-            });
-          },
-          onDeleteProject: (name: string) => {
-            this.session.deleteProject(name);
-          },
-          onChat: () => {
-            this.flipTo(true);
-          },
-          onSettings: () => {
-            animateTo({ duration: DURATION, curve: spring() }, () => {
-              this.showSettings = true;
-            });
-          },
-          onRail: () => {
-            this.session.syncChrome();
-          },
-          onRefresh: () => {
-            this.session.rescan();
-          }
-        })
-          .layoutWeight(1)
-          .width('calc(100% - ' + (GAP * 2) + 'vp)')
-          .margin({ left: GAP, right: GAP, top: this.chromeHidden ? 4 : 0, bottom: 4 })
+      IdeFace({
+        dark: this.isDark(),
+        bp: this.bp,
+        frameVp: this.screenH > 0 ? this.screenH - this.topInset : 0,
+        statusText: this.statusLine,
+        statusTone: this.statusToneValue,
+        log: this.logText,
+        hlog: this.hlogText,
+        current: this.currentRel,
+        link: this.link,
+        linkText: this.linkText,
+        device: this.session.device,
+        leftOpen: $leftOpen,
+        rightOpen: $rightOpen,
+        panelOpen: $panelOpen,
+        panelTab: $panelTab,
+        session: this.session,
+        onChat: () => {
+          this.flipTo(true);
+        },
+        onSettings: () => {
+          animateTo({ duration: DURATION, curve: spring() }, () => {
+            this.showSettings = true;
+          });
+        },
+        onBuild: () => {
+          this.buildProject();
+        },
+        onCloseTab: (rel: string) => {
+          this.requestCloseTab(rel);
         }
-        .layoutWeight(1)
-        .width('100%')
-
-        BottomDock({
-          dark: this.isDark(),
-          compact: this.bp === 'compact',
-          bottomInset: this.bottomInset,
-          statusText: this.statusLine,
-          log: this.logText,
-          hlog: this.hlogText,
-          current: this.currentRel,
-          statusTone: this.statusToneValue,
-          link: this.link,
-          linkText: this.linkText,
-          device: this.session.device,
-          onFilter: (keyword: string, tag: string, level: string) => {
-            this.session.logKeywords = keyword.length === 0 ? [] : [keyword];
-            this.session.logTag = tag;
-            this.session.logLevel = level;
-            this.session.startLogStream();
-          },
-          onDeviceTap: () => {
-            animateTo({ duration: DURATION, curve: spring() }, () => {
-              this.showSettings = true;
-            });
-          },
-          panelOpen: $panelOpen,
-          panelTab: $panelTab,
-          onTab: (idx: number) => {
-            if (idx === 1) {
-              this.session.startLogStream();
-            } else {
-              this.session.stopLogStream();
-            }
-          }
-        })
-      }
-      .width('100%')
-      .height(this.frame())
-      .alignItems(HorizontalAlign.Start)
+      })
 
       if (this.showSettings) {
         SettingsSheet({
