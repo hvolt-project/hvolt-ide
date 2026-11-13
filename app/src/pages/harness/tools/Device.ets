@@ -6,6 +6,7 @@
 import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 import { ToolRun, runHvolt } from './Build';
+import { FILES } from '../../model/Stage';
 
 export type ApprovalRequest = (tool: string, detail: string) => Promise<boolean>;
 
@@ -97,7 +98,9 @@ export function registerDeviceTools(registry: ToolRegistry, ctx: FileContext): v
         if (!allowed) {
           return 'screenshot is awaiting approval (gate not wired yet)';
         }
-        const path = ctx.projectDir() + '/build/screenshot.jpeg';
+        // 截图落在应用沙箱，不落项目的 build/：那是构建产物目录，随手拍的图混进去
+        // 会跟着打包和清理一起走。沙箱里的固定名也让下一轮能重复覆盖，不留一堆。
+        const path = FILES + '/screenshot.jpeg';
         return runHvolt(['screenshot', '-o', path], ctx.projectDir()).then((run: ToolRun) => {
           return 'screenshot code=' + run.code + ' -> ' + path + '\n' + lastLines(run.output, 5);
         });

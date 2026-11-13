@@ -234,7 +234,18 @@ export function writeSource(name: string, rel: string, text: string): boolean {
 
 // Removing a project deletes its directory in the stage root. The caller confirms first;
 // this only reports whether the tree is gone.
+/** The IDE's own source, unpacked by SelfSource. It is the app that is running, so it cannot go. */
+export const SELF_PROJECT: string = 'hvolt-ide-src';
+
+export function isProtectedProject(name: string): boolean {
+  return name === SELF_PROJECT;
+}
+
 export function deleteProject(name: string): boolean {
+  if (isProtectedProject(name)) {
+    // Removing it would take away the only copy of the source the app builds itself from.
+    return false;
+  }
   try {
     fs.rmdirSync(projectDir(name));
     return true;

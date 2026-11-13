@@ -8,8 +8,10 @@
 import util from '@ohos.util';
 import { ToolRegistry } from '../mcp/Registry';
 
-const INDEX_FILE: string = 'sdk/index.tsv';
-const API_DIR: string = 'sdk/api/';
+// 实际布局是 rawfile/sdk/sdk/：外层 sdk/ 是打包入口，里层才是 SDK 视图本身（api/ 与
+// index.tsv 都在里面）。少写一层时两个工具都读不到文件，表现为「sdk_search 坏了」。
+const INDEX_FILE: string = 'sdk/sdk/index.tsv';
+const API_DIR: string = 'sdk/sdk/api/';
 const MAX_LINES: number = 120;
 const DEFAULT_LIMIT: number = 10;
 const MAX_LIMIT: number = 40;

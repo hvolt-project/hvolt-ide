@@ -13,11 +13,11 @@ let posHandler: (line: number, col: number) => void = () => {
 };
 let chromeHandler: (hidden: boolean) => void = () => {
 };
-let chatHandler: () => void = () => {
+let chatHandler: (dir: number) => void = () => {
 };
-
-/** The page asks for the chat surface by gesture; the shell decides what that means. */
-export function setChatHandler(handler: () => void): void {
+/** The page asks for a face turn by gesture; the direction is the swipe, and the shell decides
+ * which face that lands on. */
+export function setChatHandler(handler: (dir: number) => void): void {
   chatHandler = handler;
 }
 
@@ -66,9 +66,11 @@ export class EditorBridge {
     chromeHandler(hidden);
   }
 
-  // Three- or four-finger swipe to the right in the editor.
-  openChat(): void {
-    chatHandler();
+  // The editor cannot turn its own face: the WebView owns the touch stream, so the page
+  // reports the finished swipe and lets the shell run the turn. `dir` is the sign of the
+  // swipe: negative is a leftward drag, positive rightward.
+  openChat(dir: number): void {
+    chatHandler(dir);
   }
 
   // Diagnostics from the page. console.log does not reach hilog here, so the page reports

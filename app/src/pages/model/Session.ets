@@ -5,7 +5,7 @@ import web_webview from '@ohos.web.webview';
 
 import { Bp, EditorBridge, setEditorHandlers, setPendingText } from './Bridge';
 import { withLine } from './Util';
-import { Envelope, firstLine, jsonLine, mergeTail, parseEnvelope, statLine } from './Format';
+import { Envelope, firstLine, jsonLine, mergeTail, parseEnvelope } from './Format';
 import {
   argvAbcRecords, argvAgcLoginCallback, argvAgcLoginUrl, argvAgcLoginWait, argvAgcWhoami, argvBuild,
   argvLog, argvPush, argvSign, argvStart, argvVersion
@@ -17,18 +17,24 @@ import {
 } from './Actions';
 import { flushEditor, pushText } from './Editor';
 import {
-  createProject, createTreeFile, deleteProject as deleteProjectFromDisk, deleteTreeEntry, exists, fileSize,
+  createProject, createTreeFile, deleteProject as deleteProjectFromDisk, deleteTreeEntry, exists, fileSize, isProtectedProject,
   isBinaryFile, isImageFile, pickFilesInto,
   listProjects, pickFolderAndImport, projectBundle, projectDir, projectSourceCount, readSource,
   writeSource
 } from './Project';
+import { SessionStats } from '../harness/session/Stats';
 import fs from '@ohos.file.fs';
 import zlib from '@ohos.zlib';
 import { startHarness } from '../harness/Harness';
+import { SkillStore } from '../harness/SkillStore';
+import { SelfSource } from '../harness/SelfSource';
+import { catalogFingerprint, catalogText } from '../harness/loop/Skills';
 import { ChatSession } from '../harness/loop/Loop';
+import type { CompactOutcome } from '../harness/session/Compact';
 import { Usage } from '../harness/loop/Types';
 import { LlmConfig, loadLlmConfig } from '../harness/loop/Settings';
 import { buildSystemPrompt, runtimeBlock } from '../harness/Prompt';
+import { AskAnswer, AskQuestion, formatAnswers, formatPending } from './Ask';
 import { ProjectWatcher, WatchEvent } from '../harness/fs/Watch';
 import hilog from '@ohos.hilog';
 import { readPref, writePref } from './Prefs';
@@ -116,6 +122,19 @@ export class Session {
   onChange: () => void = () => {
   };
 
+  /** The questions a tool is waiting on; empty when nothing is pending. */
+  askQuestions: AskQuestion[] = [];
+  /** Which of them is on screen. */
+  askIndex: number = 0;
+  /** Answers collected so far, in question order. */
+  askAnswers: AskAnswer[] = [];
+  /** Set when a deadline passed with nobody answering; a later answer is delivered as a message. */
+  private askPending: boolean = false;
+  /** 历史文件完整时才允许续写。 */
+  private chatWritable: boolean = true;
+  private askCallId: string = '';
+  private askResolve: ((reply: string) => void) | null = null;
+
   private staged: boolean = false;
   private options: ShellOptions = new ShellOptions();
 
@@ -128,8 +147,177 @@ export class Session {
 
   /** One conversation per app session; I11 persists it across restarts. */
   chat: ChatSession = new ChatSession();
+  /** Events already on disk; the append-only writer starts from here. */
+  private savedEvents: number = 0;
+
+  private promptDigest: string = '';
+
+  /** The IDE's own source, unpacked into the sandbox on first use. */
+  selfSource: SelfSource = new SelfSource(getContext().filesDir);
+
+  /** Skills shipped with the app plus those written into the sandbox. */
+  skills: SkillStore = new SkillStore(getContext().filesDir);
+  private skillFingerprint: string = '';
+
+  /** Lists the skill catalog, or returns one skill's full text. */
+  async loadSkill(name: string): Promise<string> {
+    if (name.length === 0) {
+      const entries = await this.skills.entries();
+      if (entries.length === 0) {
+        return '没有可用技能';
+      }
+      const lines: string[] = [];
+      for (const entry of entries) {
+        lines.push(entry.name + ' [' + entry.source + ']: ' + entry.description);
+      }
+      return lines.join('\n');
+    }
+    const text = await this.skills.read(name);
+    return text.length === 0 ? '没有名为 ' + name + ' 的技能' : text;
+  }
+
+  /** Puts a question in front of the person and resolves when they answer or cancel. */
+  /**
+   * Puts a group of questions in front of the person and waits for all of them.
+   *
+   * With a positive `timeoutSec` the wait ends at the deadline and the model gets a pending reply,
+   * which is not an approval: the questions stay on screen, and the answer that eventually arrives
+   * is appended to the conversation as a user message so the model reads it on its next turn.
+   */
+  askQuestionsFor(questions: AskQuestion[], timeoutSec: number = 0): Promise<string> {
+    if (this.askResolve !== null) {
+      return Promise.resolve('上一个提问还没有回答');
+    }
+    this.askQuestions = questions;
+    this.askIndex = 0;
+    this.askAnswers = [];
+    this.askPending = false;
+    this.askCallId = 'ask-' + Date.now();
+    this.onChange();
+    return new Promise<string>((resolve: (reply: string) => void) => {
+      this.askResolve = resolve;
+      if (timeoutSec > 0) {
+        setTimeout(() => {
+          const stillWaiting = this.askResolve;
+          if (stillWaiting === null) {
+            return;
+          }
+          this.askResolve = null;
+          this.askPending = true;
+          this.onChange();
+          stillWaiting(formatPending(this.askCallId));
+        }, timeoutSec * 1000);
+      }
+    });
+  }
+
+  /** The question currently on screen, or null when nothing is pending. */
+  currentQuestion(): AskQuestion | null {
+    if (this.askIndex < 0 || this.askIndex >= this.askQuestions.length) {
+      return null;
+    }
+    return this.askQuestions[this.askIndex];
+  }
+
+  /**
+   * Records the answer to the current question and moves to the next one, resolving the call once
+   * every question has been answered. An empty selection with no text skips the question, which the
+   * model sees as an empty answer rather than as approval.
+   */
+  answerCurrent(selected: string[], custom: string): void {
+    const question = this.currentQuestion();
+    if (question === null) {
+      return;
+    }
+    this.askAnswers.push({ id: question.id, selected: selected, custom: custom });
+    if (this.askIndex + 1 < this.askQuestions.length) {
+      this.askIndex += 1;
+      this.onChange();
+      return;
+    }
+    const resolve = this.askResolve;
+    const pending = this.askPending;
+    const callId = this.askCallId;
+    const answers = this.askAnswers;
+    this.askResolve = null;
+    this.askPending = false;
+    this.askQuestions = [];
+    this.askIndex = 0;
+    this.askAnswers = [];
+    this.onChange();
+    const summary = this.describeAnswers(answers);
+    if (resolve !== null) {
+      resolve(formatAnswers(answers));
+      // Recorded either way: without it the transcript shows a tool result and no sign of what
+      // was asked or chosen.
+      this.chat.inject('已答 ' + summary);
+      return;
+    }
+    if (pending) {
+      this.chat.inject('（提问 ' + callId + ' 超时后作答）' + summary);
+    }
+  }
+
+  /** "问题 → 选择" lines, for the transcript. */
+  private describeAnswers(answers: AskAnswer[]): string {
+    const parts: string[] = [];
+    for (const answer of answers) {
+      let text = answer.id + ' → ';
+      if (answer.selected.length > 0) {
+        text += answer.selected.join('、');
+      }
+      if (answer.custom.length > 0) {
+        text += (answer.selected.length > 0 ? '（备注：' : '') + answer.custom +
+          (answer.selected.length > 0 ? '）' : '');
+      }
+      if (answer.selected.length === 0 && answer.custom.length === 0) {
+        text += '（跳过）';
+      }
+      parts.push(text);
+    }
+    return parts.join('；');
+  }
+
+  /** Declines every remaining question; the model is told, so it does not ask again. */
+  cancelAsk(): void {
+    const resolve = this.askResolve;
+    this.askResolve = null;
+    this.askQuestions = [];
+    this.askIndex = 0;
+    this.askAnswers = [];
+    this.onChange();
+    if (resolve !== null) {
+      resolve('用户取消了提问');
+    }
+  }
+
+  /**
+   * Where this conversation lives: inside the project's own directory when one is open, and at the
+   * root of the sandbox when none is.
+   *
+   * A conversation belongs to the project it was had in — reopening a project returns to its
+   * history. With nothing open there is still a conversation (the assistant answers general
+   * questions), and it is kept in one place rather than dropped: previously saving was skipped
+   * entirely with no project open, so that history was lost on every relaunch.
+   */
+  /** 状态栏要的统计，转给会话层折叠。 */
+  statsForBar(): SessionStats {
+    return this.chat.stats();
+  }
+
+  /** 启动路径上读工程列表；读不出来不该让整个界面空着。 */
+  refreshProjectsSafe(): void {
+    try {
+      this.refreshProjects();
+    } catch (error) {
+      hilog.warn(0x0000, 'hvoltide', 'refreshProjects failed: %{public}s', JSON.stringify(error));
+    }
+  }
 
   private chatFile(name: string): string {
+    if (name.length === 0) {
+      return this.filesDir() + '/chat.jsonl';
+    }
     return this.filesDir() + '/projects/' + name + '/.hvolt/chat.jsonl';
   }
 
@@ -146,45 +334,130 @@ export class Session {
    */
   private loadChat(name: string): void {
     const path = this.chatFile(name);
+    this.savedEvents = 0;
+    let text = '';
     try {
-      if (!fs.accessSync(path)) {
-        return;
+      if (fs.accessSync(path)) {
+        text = fs.readTextSync(path);
       }
-      const text = fs.readTextSync(path);
-      this.chat.load(text);
-      const messages = this.chat.messages().length;
-      hilog.info(0x0000, 'hvoltide', 'chat restored: %{public}d messages', messages);
     } catch (e) {
       this.append('chat history load failed: ' + (e as Error).message);
     }
+    // 无论有没有历史文件都重建会话。文件不存在时「什么都不做」会把上一个项目的对话留在
+    // 内存里——关掉项目后 harness 面显示的还是刚才那个项目。
+    this.chat = new ChatSession();
+    this.chatWritable = true;
+    if (text.length > 0) {
+      const ok = this.chat.load(text);
+      if (!ok) {
+        // 文件不完整：改名留档，再从空日志重开。
+        // 留着它既读不回来，又会让后续写入一直停在 seq 0；改名后原件仍在，可供人工查看。
+        const broken = this.chatFile(this.project) + '.bad-' + String(Date.now());
+        try {
+          fs.renameSync(this.chatFile(this.project), broken);
+          hilog.warn(0x0000, 'hvoltide', 'chat history incomplete, kept as %{public}s', broken);
+        } catch (error) {
+          this.chatWritable = false;
+          hilog.warn(0x0000, 'hvoltide', 'chat history incomplete, rename failed: %{public}s',
+            JSON.stringify(error));
+        }
+        this.append('对话历史不完整，已另存为 ' + broken.split('/').pop());
+      } else {
+        this.savedEvents = this.chat.eventCount();
+        hilog.info(0x0000, 'hvoltide', 'chat restored: %{public}d events', this.savedEvents);
+      }
+    }
+    // 读完历史就通知界面：转写、统计都是从这里恢复的，不通知就一直是空的。
+    this.onChange();
   }
 
-  private saveChat(): void {
-    if (this.project.length === 0) {
+  /**
+   * Appends the events written since the last save.
+   *
+   * The log only ever grows, so the file is written the same way: appending means a crash costs the
+   * events in flight, never the conversation behind them. `truncate` is only for an explicit reset,
+   * where the file has to become empty on purpose.
+   */
+  private saveChat(truncate: boolean = false): void {
+    if (!this.chatWritable && !truncate) {
       return;
     }
     const path = this.chatFile(this.project);
+    const text = truncate ? '' : this.chat.dumpSince(this.savedEvents);
+    if (!truncate && text.length === 0) {
+      return;
+    }
     try {
       const dir = path.substring(0, path.lastIndexOf('/'));
       if (!fs.accessSync(dir)) {
         fs.mkdirSync(dir, true);
       }
-      const text = this.chat.dump();
-      const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+      const mode = truncate
+        ? fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC
+        : fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.APPEND;
+      const file = fs.openSync(path, mode);
       try {
-        fs.writeSync(file.fd, text);
+        if (text.length > 0) {
+          fs.writeSync(file.fd, text);
+        }
       } finally {
         fs.closeSync(file);
       }
-      hilog.info(0x0000, 'hvoltide', 'chat saved: %{public}d bytes', text.length);
+      this.savedEvents = truncate ? 0 : this.chat.eventCount();
+      if (truncate) {
+        // 明确重写之后文件是新的，续写开关跟着恢复
+        this.chatWritable = true;
+      }
+      hilog.info(0x0000, 'hvoltide', 'chat saved: +%{public}d bytes, %{public}d events',
+        text.length, this.savedEvents);
     } catch (e) {
       this.append('chat history save failed: ' + (e as Error).message);
     }
   }
 
   /** Runs one chat turn, reporting each event to the caller for rendering. */
+  /** A cheap digest, enough to notice that a file's content changed. */
+  private static digest(text: string): string {
+    let hash = 0;
+    for (let i = 0; i < text.length; i += 1) {
+      hash = ((hash << 5) - hash + text.charCodeAt(i)) | 0;
+    }
+    return String(hash) + ':' + text.length;
+  }
+
+  /**
+   * Re-reads the system prompt and reinstalls it when it changed.
+   *
+   * Checked before each turn rather than watched: a file watcher can be suspended in the
+   * background and then miss the edit, while one read per turn costs a stat and a small file.
+   */
+  async refreshPrompt(): Promise<void> {
+    const text = await buildSystemPrompt();
+    const digest = Session.digest(text);
+    if (digest === this.promptDigest) {
+      return;
+    }
+    this.promptDigest = digest;
+    this.chat.setSystem(text);
+    hilog.info(0x0000, 'hvoltide', 'system prompt reloaded: %{public}d chars', text.length);
+  }
+
+  /** Re-reads the skill directories and updates the catalog message when anything changed. */
+  async refreshSkills(): Promise<void> {
+    const entries = await this.skills.entries();
+    const fingerprint = catalogFingerprint(entries);
+    if (fingerprint === this.skillFingerprint) {
+      return;
+    }
+    this.skillFingerprint = fingerprint;
+    this.chat.setCatalog(catalogText(entries));
+    hilog.info(0x0000, 'hvoltide', 'skill catalog: %{public}d entries', entries.length);
+  }
+
   async chatSend(userText: string, images: string[],
     onEvent: (kind: string, text: string) => void): Promise<void> {
+    await this.refreshPrompt();
+    await this.refreshSkills();
     const config: LlmConfig = await loadLlmConfig();
     if (!config.ready()) {
       onEvent('error', '先在设置里填模型地址、模型名与密钥');
@@ -216,9 +489,6 @@ export class Session {
       onError: (message: string) => {
         onEvent('error', message);
       },
-      onStats: (usage, rounds: number, millis: number) => {
-        onEvent('stats', statLine(usage, rounds, millis));
-      },
       onDone: () => {
         onEvent('done', '');
       }
@@ -233,7 +503,23 @@ export class Session {
   chatReset(): void {
     this.chat.reset();
     // Clearing must survive a restart: otherwise the old transcript comes back on next launch.
-    this.saveChat();
+    this.saveChat(true);
+  }
+
+  /** Compacts the older part of the conversation now; reports what left the context. */
+  async chatCompact(): Promise<CompactOutcome | null> {
+    const config: LlmConfig = await loadLlmConfig();
+    if (!config.ready()) {
+      return null;
+    }
+    const outcome = await this.chat.compactNow(config);
+    if (outcome !== null) {
+      this.saveChat();
+      hilog.info(0x0000, 'hvoltide',
+        'chat compacted: seq %{public}d-%{public}d turns=%{public}d tokens=%{public}d',
+        outcome.from, outcome.to, outcome.turns, outcome.tokens);
+    }
+    return outcome;
   }
 
   private dir(): string {
@@ -343,6 +629,21 @@ export class Session {
     this.agc.refresh();
     this.onChange();
     this.stageAll();
+    // Load the catalog before the first turn, so the very first request already knows the skills.
+    this.refreshSkills().catch(() => {
+    });
+    // Unpack the source in the background: it is 2.5 MB and nothing waits on it at startup.
+    this.selfSource.ensure().then((path: string) => {
+      hilog.info(0x0000, 'hvoltide', 'self source ready: %{public}s', path);
+      // The project list was read before this unpack finished, so the source would not appear
+      // until the next launch. Re-read it here instead.
+      this.projects = listProjects();
+      hilog.info(0x0000, 'hvoltide', 'projects after unpack: %{public}d [%{public}s]',
+        this.projects.length, this.projects.join(','));
+      this.onChange();
+    }).catch((e: Error) => {
+      hilog.warn(0x0000, 'hvoltide', 'self source unpack failed: %{public}s', e.message);
+    });
     // The endpoint is a side facility: a bind failure leaves a working editor and one log line.
     startHarness({
       projectDir: () => {
@@ -357,6 +658,21 @@ export class Session {
           }
         });
         return reply;
+      },
+      // The (seq N) pointers a compiled checkpoint carries resolve through here.
+      recall: async (seq: string, query: string, limit: number): Promise<string> => {
+        return this.chat.recall(seq, query, limit);
+      },
+      // A tool waiting on a person: the turn stays open until answerAsk runs.
+      ask: async (questions: AskQuestion[], timeoutSec: number): Promise<string> => {
+        return this.askQuestionsFor(questions, timeoutSec);
+      },
+      // Skills: an empty name lists the catalog, a name loads the body.
+      skill: async (name: string): Promise<string> => {
+        return this.loadSkill(name);
+      },
+      selfSourceDir: (): string => {
+        return this.selfSource.ready() ? this.selfSource.path() : '';
       }
     });
   }
@@ -451,12 +767,20 @@ export class Session {
     }
     this.ready = false;
     this.append('close project ' + gone);
+    // The next conversation is the one without a project, not the one just left.
+    this.loadChat('');
     this.onChange();
   }
 
   // Deleting the open project closes it first: the file list, tabs and editor buffer all
   // point at paths that are about to disappear.
   deleteProject(name: string): void {
+    // Refused before closing: closing first would leave the list pointing at a project that then
+    // failed to delete, which reads as a half-finished operation.
+    if (isProtectedProject(name)) {
+      this.append('这个工程是 IDE 自身的源码，不能删除');
+      return;
+    }
     if (name === this.project) {
       this.closeProject();
     }
@@ -545,6 +869,8 @@ export class Session {
       this.files = [];
       this.openTabs = [];
       this.statusText = '未打开工程';
+      // Nothing open still has a conversation; it is the shared one.
+      this.loadChat('');
       this.onChange();
     });
   }

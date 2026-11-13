@@ -4,6 +4,7 @@
 // means the shipped text can be reviewed as documentation, and the volatile part is never stale
 // in a file that looks authoritative.
 
+import fs from '@ohos.file.fs';
 import util from '@ohos.util';
 import { readPref, writePref } from '../model/Prefs';
 
@@ -17,8 +18,26 @@ export interface RuntimeContext {
   connected: boolean;
 }
 
-/** The shipped prompt, or '' when the file cannot be read (the loop still works, just blind). */
+const OVERRIDE: string = 'harness/system.md';
+
+/**
+ * The prompt: a writable copy in the sandbox first, the shipped file second.
+ *
+ * The override is what makes the prompt editable at runtime — the shipped file is read-only inside
+ * the bundle, so without this layer nothing the assistant wrote there could ever take effect.
+ * '' when neither can be read (the loop still works, just blind).
+ */
 export async function loadPromptFile(): Promise<string> {
+  try {
+    const override = getContext().filesDir + '/' + OVERRIDE;
+    if (fs.accessSync(override)) {
+      const text = fs.readTextSync(override);
+      if (text.trim().length > 0) {
+        return text;
+      }
+    }
+  } catch (e) {
+  }
   try {
     const rm = getContext().resourceManager;
     const bytes: Uint8Array = await rm.getRawFileContent(PROMPT_FILE);
@@ -58,6 +77,11 @@ export async function buildSystemPrompt(): Promise<string> {
     parts.push('## 用户附加要求\n' + extra);
   }
   return parts.join('\n\n');
+}
+
+/** Where the assistant writes a prompt override. */
+export function promptOverridePath(): string {
+  return getContext().filesDir + '/' + OVERRIDE;
 }
 
 export function saveExtraInstructions(text: string): void {

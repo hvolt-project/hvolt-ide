@@ -66,10 +66,27 @@ export function applyDelta(payload: string, text: string[], calls: Map<number, T
   const reported = parsed['usage'] as Record<string, Object>;
   if (reported !== undefined && reported !== null && sink.onUsage !== undefined) {
     const details = reported['completion_tokens_details'] as Record<string, Object>;
+    // Providers spell the cache split differently and all of them in the same OpenAI-shaped body:
+    // DeepSeek reports `prompt_cache_hit_tokens`/`prompt_cache_miss_tokens`, OpenAI reports
+    // `prompt_tokens_details.cached_tokens`, Anthropic reports `cache_read_input_tokens` and
+    // `cache_creation_input_tokens`. Reading the first present spelling means one parser serves all
+    // of them; when none is present the cache read is 0 and the whole prompt counts as uncached.
+    const promptDetail = reported['prompt_tokens_details'] as Record<string, Object>;
+    const prompt = numberOr(reported['prompt_tokens'], 0);
+    let cacheRead = numberOr(reported['prompt_cache_hit_tokens'],
+      numberOr(reported['cache_read_input_tokens'], 0));
+    if (cacheRead === 0 && promptDetail !== undefined && promptDetail !== null) {
+      cacheRead = numberOr(promptDetail['cached_tokens'], 0);
+    }
+    const cacheWrite = numberOr(reported['cache_creation_input_tokens'],
+      numberOr(reported['prompt_cache_write_tokens'], 0));
+    const uncached = numberOr(reported['prompt_cache_miss_tokens'],
+      Math.max(0, prompt - cacheRead - cacheWrite));
     sink.onUsage({
-      promptTokens: numberOr(reported['prompt_tokens'], 0),
+      uncachedInputTokens: uncached,
+      cacheReadTokens: cacheRead,
+      cacheWriteTokens: cacheWrite,
       completionTokens: numberOr(reported['completion_tokens'], 0),
-      totalTokens: numberOr(reported['total_tokens'], 0),
       reasoningTokens: details === undefined || details === null ? 0 :
         numberOr(details['reasoning_tokens'], 0)
     });
@@ -80,6 +97,12 @@ export function applyDelta(payload: string, text: string[], calls: Map<number, T
     return text.join('');
   }
   const first = choices[0] as Record<string, Object>;
+  // Why a stream ended matters: `length` means the budget ran out before any content, which looks
+  // identical to a model that simply said nothing.
+  const finish = first['finish_reason'];
+  if (finish !== undefined && finish !== null && sink.onFinish !== undefined) {
+    sink.onFinish(String(finish));
+  }
   const delta = first['delta'] as Record<string, Object>;
   if (delta === undefined || delta === null) {
     return text.join('');

@@ -5,7 +5,6 @@
 // wrapped here because neither is usable alone: a recognizer without audio never fires, and
 // audio without the recognizer is a file nobody asked for.
 
-import { speechRecognizer } from '@kit.CoreSpeechKit';
 import audio from '@ohos.multimedia.audio';
 import abilityAccessCtrl from '@ohos.abilityAccessCtrl';
 import hilog from '@ohos.hilog';
@@ -17,7 +16,8 @@ export type AsrText = (text: string, final: boolean) => void;
 export type AsrError = (message: string) => void;
 
 export class AsrSession {
-  private engine: speechRecognizer.SpeechRecognitionEngine | null = null;
+  private engine: ESObject = null;
+  private recognizer: ESObject = null;
   private capturer: audio.AudioCapturer | null = null;
   private sessionId: string = '';
   private running: boolean = false;
@@ -50,7 +50,14 @@ export class AsrSession {
     this.running = true;
 
     try {
-      this.engine = await speechRecognizer.createEngine({
+      // The speech kit is not part of the SDK this app is built against. Naming it anywhere in
+      // this module makes loading the module itself fail, so dictation reports unavailability
+      // instead of reaching for it.
+      this.running = false;
+      this.starting = false;
+      this.onError('语音识别不可用：本机没有语音组件');
+      return;
+      this.engine = await this.recognizer.createEngine({
         language: 'zh-CN',
         online: 1
       });
@@ -68,7 +75,7 @@ export class AsrSession {
       },
       onEvent: (sessionId: string, eventCode: number, eventMessage: string) => {
       },
-      onResult: (sessionId: string, result: speechRecognizer.SpeechRecognitionResult) => {
+      onResult: (sessionId: string, result: ESObject) => {
         const text = result.result;
         if (text !== undefined && text.length > 0) {
           this.onText(text, result.isFinal === true);

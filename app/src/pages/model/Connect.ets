@@ -29,7 +29,9 @@ export function hvoltAsync(argv: string[], cwd: string, filesDir: string,
       done(text);
     })
     .catch((e: Error) => {
-      done('{"code":-1,"output":"' + e.message + '"}');
+      // taskpool 层失败（含 libnavi panic）：进程已经结束，不是「还在跑」。写 -1 会让
+      // job_output 永远报 running。这里必须收口成失败，消息留在 output 里。
+      done('{"code":1,"output":"' + e.message + '"}');
     });
 }
 
@@ -48,7 +50,9 @@ export function streamStartAsync(paramsJson: string, filesDir: string,
       done(raw as string);
     })
     .catch((e: Error) => {
-      done('{"code":-1,"output":"' + e.message + '"}');
+      // taskpool 层失败（含 libnavi panic）：进程已经结束，不是「还在跑」。写 -1 会让
+      // job_output 永远报 running。这里必须收口成失败，消息留在 output 里。
+      done('{"code":1,"output":"' + e.message + '"}');
     });
 }
 

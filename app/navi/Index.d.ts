@@ -6,3 +6,5 @@ export const streamStart: (paramsJson: string, filesDir: string) => string;
 export const streamRead: (handle: number, from: number, max: number) => string;
 export const streamNext: (handle: number, from: number, max: number, waitMs: number) => string;
 export const streamStop: (handle: number) => void;
+export const sandboxProbe: (dir: string, cache: string) => string;
+export const sandboxSh: (line: string, root: string) => string;

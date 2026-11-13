@@ -2,7 +2,7 @@ import web_webview from '@ohos.web.webview';
 import { DURATION, spring } from '../model/Motion';
 import { palette, Palette, RADIUS } from '../model/Palette';
 import { EditorBridge } from '../model/Bridge';
-import { fileSize, isBinaryFile, isImageFile, projectDir } from '../model/Project';
+import { fileSize, isBinaryFile, isImageFile, isProtectedProject, projectDir } from '../model/Project';
 import fs from '@ohos.file.fs';
 import image from '@ohos.multimedia.image';
 import { LeftPane, RightRail } from './SidePanes';
@@ -48,6 +48,10 @@ export struct EditorArea {
   };
   onSettings: () => void = () => {
   };
+  // The drawer mounted inside the editor needs the same chat entry as the one mounted by the page:
+  // two mounts of one component must not disagree about which icons work.
+  onChat: () => void = () => {
+  };
   onRail: () => void = () => {
   };
   onRefresh: () => void = () => {
@@ -56,6 +60,13 @@ export struct EditorArea {
   // Decoded once per switch: a file:// URL handed to Image does not resolve for a path
   // inside the app sandbox, so the bitmap is read through its descriptor instead.
   @State private pixmap: image.PixelMap | undefined = undefined;
+  // The naming sheet for a new project, owned here so the empty state can create one without
+  // routing through the drawer that happens to be closed.
+  @State private naming: boolean = false;
+  @State private newName: string = '';
+  // Which project row is under the finger, so the press state can be drawn from state rather than
+  // from a hover animation that the phone shape never fires.
+  @State private pressed: string = '';
 
   private p(): Palette {
     return palette(this.dark);
@@ -162,6 +173,27 @@ export struct EditorArea {
           this.onOpenProject();
         })
 
+        // Creating a project belongs on this page, not only behind the drawer: the empty state is
+        // where a first-run reader lands, and it should not require opening a menu to start.
+        Row({ space: 10 }) {
+          SymbolGlyph($r('sys.symbol.plus_square'))
+            .fontSize(17)
+            .fontColor([this.p().brand])
+          Text('新建工程')
+            .fontSize(15)
+            .fontColor(this.p().textPrimary)
+            .layoutWeight(1)
+        }
+        .width('100%')
+        .height(48)
+        .padding({ left: 14, right: 14 })
+        .borderRadius(14)
+        .backgroundColor(this.p().card)
+        .onClick(() => {
+          this.newName = '';
+          this.naming = true;
+        })
+
         if (this.projects.length > 0) {
           List() {
             ForEach(this.projects, (name: string) => {
@@ -169,7 +201,7 @@ export struct EditorArea {
                 Row() {
                   Text(name)
                     .fontSize(14)
-                    .fontColor(this.p().textSecondary)
+                    .fontColor(this.pressed === name ? this.p().textPrimary : this.p().textSecondary)
                     .layoutWeight(1)
                     .maxLines(1)
                     .textOverflow({ overflow: TextOverflow.Ellipsis })
@@ -177,13 +209,26 @@ export struct EditorArea {
                 .width('100%')
                 .height(44)
                 .padding({ left: 14, right: 14 })
+                // A row that looks inert gets long-pressed by accident; the press state is what
+                // tells the reader the tap landed before the project has finished loading.
+                .backgroundColor(this.pressed === name ? this.p().brandSoft : Color.Transparent)
+                .scale({ x: this.pressed === name ? 0.98 : 1, y: this.pressed === name ? 0.98 : 1 })
+                .onTouch((event: TouchEvent) => {
+                  if (event.type === TouchType.Down) {
+                    this.pressed = name;
+                  } else if (event.type === TouchType.Up || event.type === TouchType.Cancel) {
+                    this.pressed = '';
+                  }
+                })
+                .animation({ duration: 120, curve: spring() })
                 .onClick(() => {
                   this.onSwitch(name);
                 })
               }
-              // The swipe only reveals the action; deleting still needs the dialog, because
-              // the project directory goes with the entry.
-              .swipeAction({
+              // The embedded self-bootstrap project has no delete affordance at all, not even the
+              // swipe that would reveal one: the app builds itself from that directory, so a
+              // gesture that offers to remove it is a promise the app cannot keep.
+              .swipeAction(isProtectedProject(name) ? { end: undefined } : {
                 end: {
                   builder: () => {
                     this.DeleteSwipe(name);
@@ -212,6 +257,81 @@ export struct EditorArea {
     .padding({ left: 24, right: 24 })
     .backgroundColor(this.p().bg)
     .borderRadius(RADIUS)
+    // A rightward swipe on the empty state asks for the harness face. One shot past a threshold:
+    // the finger's travel is not tracked.
+  }
+
+  // The naming sheet the empty state opens. Deliberately the same shape as the drawer's: two ways
+  // to create a project should not look like two different features.
+  @Builder
+  NameSheet() {
+    Column() {
+      Column({ space: 12 }) {
+        Text('新建工程')
+          .fontSize(15)
+          .fontWeight(FontWeight.Medium)
+          .fontColor(this.p().textPrimary)
+          .width('100%')
+        TextInput({ text: this.newName, placeholder: '工程名' })
+          .height(44)
+          .width('100%')
+          .fontSize(15)
+          .fontColor(this.p().textPrimary)
+          .placeholderColor(this.p().textTertiary)
+          .backgroundColor(this.p().card)
+          .borderRadius(12)
+          .padding({ left: 12, right: 12 })
+          .onChange((v: string) => {
+            this.newName = v;
+          })
+        Row({ space: 10 }) {
+          Text('取消')
+            .fontSize(15)
+            .fontColor(this.p().textSecondary)
+            .layoutWeight(1)
+            .height(44)
+            .textAlign(TextAlign.Center)
+            .borderRadius(12)
+            .backgroundColor(this.p().card)
+            .onClick(() => {
+              this.naming = false;
+            })
+          Text('创建')
+            .fontSize(15)
+            .fontColor(this.p().textPrimary)
+            .layoutWeight(1)
+            .height(44)
+            .textAlign(TextAlign.Center)
+            .borderRadius(12)
+            .backgroundColor(this.p().brandSoft)
+            .onClick(() => {
+              const name = this.newName.trim();
+              this.naming = false;
+              if (name.length > 0) {
+                this.onCreate(name);
+              }
+            })
+        }
+        .width('100%')
+      }
+      .width('100%')
+      .constraintSize({ maxWidth: 380 })
+      .padding({ left: 16, right: 16, top: 12, bottom: 14 })
+      .borderRadius(16)
+      .backgroundColor(this.p().pane)
+      .border({ width: 0.5, color: this.p().divider })
+    }
+    .width('100%')
+    .height('100%')
+    .padding({ left: 24, right: 24 })
+    .justifyContent(FlexAlign.Center)
+    .alignItems(HorizontalAlign.Center)
+    // The scrim is a hit target: a sheet with no way out but a button traps the reader when the
+    // keyboard is covering the button.
+    .backgroundColor('#00000066')
+    .onClick(() => {
+      this.naming = false;
+    })
   }
 
   // Bitmaps are shown, not opened: the file never becomes a text buffer, so nothing can be
@@ -328,9 +448,14 @@ export struct EditorArea {
           })
       }
 
+      if (this.naming) {
+        this.NameSheet()
+      }
+
       if (this.leftOpen) {
         LeftPane({
           dark: this.dark,
+          onChat: this.onChat,
           paneWidth: 232,
           onOpen: this.onOpen,
           onCreate: this.onCreate,

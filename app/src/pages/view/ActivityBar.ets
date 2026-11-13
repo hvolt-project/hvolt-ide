@@ -11,6 +11,8 @@ export struct ActivityBar {
   @StorageProp('ide.view') view: number = 0;
   onSettings: () => void = () => {
   };
+  onChat: () => void = () => {
+  };
 
   private p(): Palette {
     return palette(this.dark);

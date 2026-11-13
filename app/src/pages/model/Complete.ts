@@ -10,7 +10,7 @@ export interface Suggestion {
   items: string[];
 }
 
-export const COMMANDS: string[] = ['/reset', '/clear', '/help'];
+export const COMMANDS: string[] = ['/reset', '/compact', '/skills', '/help'];
 
 const MAX_FILES = 8;
 

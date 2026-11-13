@@ -25,6 +25,46 @@ function signedPackage(root: string): string {
   return signed.length > 0 ? signed[0] : '';
 }
 
+/**
+ * Installing the IDE over itself.
+ *
+ * The reason this is its own tool: the package being installed is the one running the call, so the
+ * process is stopped partway through. Whether the install itself survives that is the open question
+ * — hvolt streams the bytes first and the daemon installs only after the last byte, so stopping the
+ * caller should leave the package complete; this tool is how that gets measured rather than assumed.
+ */
+function registerReinstallTool(registry: ToolRegistry, ctx: FileContext): void {
+  registry.register({
+    name: 'reinstall_self',
+    description: 'Install the signed package built from the IDE\'s own unpacked source over the ' +
+      'running app. The process is stopped by the install, so the call may not return. Diagnostic: ' +
+      'it exists to prove that a self-install completes.',
+    inputSchema: {
+      'type': 'object',
+      'properties': {},
+      'required': []
+    },
+    approval: 'confirm',
+    handler: (args: Record<string, Object>): Promise<string> => {
+      const locate = ctx.selfSourceDir;
+      if (locate === undefined) {
+        return Promise.resolve('self source is not available');
+      }
+      const root = locate();
+      if (root.length === 0) {
+        return Promise.resolve('the IDE source has not been unpacked yet');
+      }
+      const signed = signedPackage(root);
+      if (signed.length === 0) {
+        return Promise.resolve('no signed package in ' + root + '/build — build the source first');
+      }
+      return runHvolt(['push', '--hap', 'build/' + signed], root).then((installed: ToolRun) => {
+        return 'self-install ' + signed + ' code=' + installed.code + '\n' + lastLines(installed.output, 10);
+      });
+    }
+  });
+}
+
 export function registerDeployTool(registry: ToolRegistry, ctx: FileContext): void {
   registry.register({
     name: 'sign_deploy',
@@ -57,4 +97,5 @@ export function registerDeployTool(registry: ToolRegistry, ctx: FileContext): vo
       });
     }
   });
+  registerReinstallTool(registry, ctx);
 }

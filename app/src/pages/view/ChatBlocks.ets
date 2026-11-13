@@ -1,114 +1,66 @@
-// Turning the flat transcript into what the eye should see.
+// 对话行：一条事件派生一行，一行一件事。
 //
-// Every thought and tool line is "process": the middle of a turn, not its answer. Consecutive
-// process lines form one block, and four display modes decide whether that block starts open.
-// The final answer and the closing statistic are never folded — folding exists to hide how the
-// work was done, never what came of it.
+// 与 dsh-client-ui-chat 的渲染方式对齐：每条注入、每次工具调用、每段推理各自是一行
+// DisclosureRow（标题 + 收起摘要 + 展开内容，见 client.js:4982 的 DisclosureRow 用法），
+// 不是把连续过程并成一块再按档位决定开合。
 
-export type FoldMode = 'quiet' | 'normal' | 'detail' | 'full';
-
-export type ChatKind = 'user' | 'assistant' | 'tool' | 'error' | 'thought' | 'stats';
+export type ChatKind = 'user' | 'assistant' | 'thought' | 'tool' | 'error' | 'injection';
 
 export interface ChatLine {
   kind: ChatKind;
+  /** 正文；工具行是参数摘要，推理行是全文。 */
   text: string;
-  /** Tool name, for tool lines. */
+  /** 工具名，或注入的生产者名。 */
   name: string;
 }
 
-export interface ChatBlock {
-  kind: 'user' | 'assistant' | 'stats' | 'group';
-  /** Set for non-group blocks. */
-  text: string;
-  /** Whether a group starts open. Ignored by other kinds. */
-  open: boolean;
-  items: ChatLine[];
-  /** The one line a collapsed group shows. */
-  summary: string;
-  key: string;
-}
-
-function isProcess(kind: ChatKind): boolean {
-  return kind === 'thought' || kind === 'tool';
-}
-
-function firstLine(text: string): string {
-  const cut = text.indexOf('\n');
-  const head = cut >= 0 ? text.substring(0, cut) : text;
-  return head.length > 48 ? head.substring(0, 48) + '…' : head;
-}
-
-/** What a collapsed group says: one line, chosen by how much the mode is willing to spend. */
-export function groupSummary(items: ChatLine[], mode: FoldMode): string {
-  let thoughts = 0;
-  let tools = 0;
-  let lastTool = '';
-  let preview = '';
-  for (const item of items) {
-    if (item.kind === 'thought') {
-      thoughts++;
-      if (preview.length === 0) {
-        preview = firstLine(item.text);
-      }
-    } else if (item.kind === 'tool') {
-      tools++;
-      if (item.name.length > 0) {
-        lastTool = item.name;
-      }
-    }
-  }
-  const steps = items.length;
-  if (mode === 'quiet') {
-    return '过程 · ' + steps + ' 步';
-  }
-  // normal keeps the shape of the work visible: what was being thought, what ran last.
-  const parts: string[] = [];
-  if (thoughts > 0) {
-    parts.push(preview.length > 0 ? preview : '思考');
-  }
-  if (tools > 0) {
-    parts.push(lastTool.length > 0 ? lastTool : '工具');
-  }
-  const body = parts.join(' · ');
-  return (body.length > 0 ? body + '  ' : '') + '· ' + steps + ' 步';
+/** 造一行。身份由 lineKey 从内容派生，不再另存 id。 */
+export function makeLine(kind: ChatKind, text: string, name: string): ChatLine {
+  return { kind: kind, text: text, name: name };
 }
 
 /**
- * Splits lines into blocks for rendering.
- *
- * `toggled` holds the user's own open/closed decisions, keyed by block key; a key that is present
- * wins over the mode default, so switching modes does not undo what the reader did by hand.
+ * 一行在重建之后仍认得出的键。transcript 每次刷新都会重新建行、id 全换，
+ * 开合状态若挂在 id 上，刷新一次就全被收起。
  */
-export function buildBlocks(lines: ChatLine[], mode: FoldMode, toggled: Map<string, boolean>): ChatBlock[] {
-  const blocks: ChatBlock[] = [];
-  let pending: ChatLine[] = [];
+export function lineKey(line: ChatLine): string {
+  return line.kind + ':' + String(line.text.length) + ':' + line.text.substring(0, 24);
+}
 
-  const flush = () => {
-    if (pending.length === 0) {
-      return;
-    }
-    const key = 'g' + blocks.length;
-    const byMode = mode === 'detail' || mode === 'full';
-    const open = toggled.has(key) ? toggled.get(key) as boolean : byMode;
-    blocks.push({
-      kind: 'group', text: '', open: open, items: pending,
-      summary: groupSummary(pending, mode), key: key
-    });
-    pending = [];
-  };
+/** 这一行是否可折叠：只有过程类（推理、工具、注入）能收起。 */
+export function foldable(kind: ChatKind): boolean {
+  return kind === 'thought' || kind === 'tool' || kind === 'injection';
+}
 
-  for (const line of lines) {
-    if (isProcess(line.kind)) {
-      pending.push(line);
-      continue;
-    }
-    flush();
-    blocks.push({
-      kind: line.kind === 'user' ? 'user' : (line.kind === 'stats' ? 'stats' : 'assistant'),
-      text: line.text, open: true, items: [], summary: '',
-      key: 'b' + blocks.length
-    });
+/** 收起时显示的一行标题。 */
+export function lineTitle(line: ChatLine): string {
+  if (line.kind === 'thought') {
+    const size = line.text.length;
+    return size === 0 ? '思考' : '思考（' + String(size) + ' 字）';
   }
-  flush();
-  return blocks;
+  if (line.kind === 'tool') {
+    const name = line.name.length > 0 ? line.name : '工具';
+    const head = firstLine(line.text);
+    return head.length > 0 ? name + ' · ' + head : name;
+  }
+  if (line.kind === 'injection') {
+    const name = line.name.length > 0 ? line.name : '上下文';
+    return name;
+  }
+  return firstLine(line.text);
+}
+
+/** 展开后显示的内容。 */
+export function lineDetail(line: ChatLine): string {
+  if (line.kind === 'thought' || line.kind === 'tool') {
+    return line.text;
+  }
+  return '';
+}
+
+/** 第一行，过长截断。工具的参数可能很长，标题只要够认出是哪一次调用。 */
+function firstLine(text: string): string {
+  const cut = text.indexOf('\n');
+  const head = cut >= 0 ? text.substring(0, cut) : text;
+  return head.length > 64 ? head.substring(0, 64) + '…' : head;
 }

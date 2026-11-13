@@ -23,7 +23,5 @@ sign_alg = "SHA256withECDSA"
 
 [products]
 
-[dependencies.navi]
-path = "navi"
 
 [registries]

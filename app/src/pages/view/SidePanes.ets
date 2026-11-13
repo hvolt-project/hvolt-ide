@@ -108,6 +108,8 @@ export struct LeftPane {
 
   @State private view: number = 0;
   @State private expanded: string[] = ['src', 'src/pages'];
+  onChat: () => void = () => {
+  };
   @State private naming: boolean = false;
   @State private newName: string = '';
   @State private fileNaming: boolean = false;
@@ -144,12 +146,6 @@ export struct LeftPane {
         }
       });
     }
-    items.push({
-      value: '设置',
-      action: () => {
-        this.onSettings();
-      }
-    });
     return items;
   }
 
@@ -487,6 +483,18 @@ export struct LeftPane {
         this.ViewIcon($r('sys.symbol.list_bullet'), 1)
         this.ViewIcon($r('sys.symbol.link'), 2)
         Blank()
+        Stack() {
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(16)
+            .fontColor([this.p().textSecondary])
+        }
+        .width(32)
+        .height(32)
+        .borderRadius(8)
+        .onClick(() => {
+          this.onSettings();
+        })
+
         Stack() {
           SymbolGlyph($r('sys.symbol.dot_grid_2x2'))
             .fontSize(16)

@@ -45,21 +45,15 @@ export function registerLogTools(registry: ToolRegistry, ctx: FileContext): void
       const lines = clampLines(args['lines'] === undefined ? DEFAULT_LINES : args['lines'] as number);
       const pattern = args['pattern'] === undefined ? '' : shellSafe(args['pattern'] as string);
 
-      return runHvolt(['shell', 'ls -t /data/log/hilog/hilog.*.gz | head -3'], root)
-        .then((listing: ToolRun) => {
-          const files: string[] = listing.output.split('\n')
-            .map((line: string) => line.trim())
-            .filter((line: string) => line.length > 0 && line.endsWith('.gz'));
-          if (files.length === 0) {
-            return 'no persisted log files under /data/log/hilog';
-          }
-          const filter = pattern.length === 0 ? '' : ' | grep -F \'' + pattern + '\'';
-          const command = 'zcat ' + files.join(' ') + filter + ' | tail -' + lines;
-          return runHvolt(['shell', command], root).then((run: ToolRun) => {
-            const body = run.output.trim();
-            return body.length === 0 ? '(no matching lines in ' + files.length + ' file(s))' : body;
-          });
-        });
+      // 归档的 /data/log/hilog/*.gz 是 hilog 自己的二进制记录格式：zcat 解出来仍是带二进制头
+      // 的行，当文本 tail 会吐乱码（实测 3MB 输出里混着记录头）。改让 hilog 自己 dump——输出
+      // 是标准文本，时间、级别、tag 都在，也不需要先找文件名。
+      const filter = pattern.length === 0 ? '' : ' | grep -F \'' + pattern + '\'';
+      const command = 'hilog -x 2>/dev/null' + filter + ' | tail -' + lines;
+      return runHvolt(['shell', command], root).then((run: ToolRun) => {
+        const body = run.output.trim();
+        return body.length === 0 ? '(no matching lines in the device log)' : body;
+      });
     }
   });
 }

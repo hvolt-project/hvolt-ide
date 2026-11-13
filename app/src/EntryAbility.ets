@@ -1,12 +1,10 @@
 import { AbilityConstant, ConfigurationConstant, UIAbility, Want } from '@kit.AbilityKit';
 import { hilog } from '@kit.PerformanceAnalysisKit';
-import { window } from '@kit.ArkUI';
+import { window, router } from '@kit.ArkUI';
 
 const DOMAIN = 0x0000;
 
 // The page owns layout inside the insets; the ability only reports where they are.
-// Each edge reports its own height — taking the max of both for both keys put the
-// status-bar value on the bottom edge and left the dock short by that difference.
 function publishInsets(win: window.Window): void {
   try {
     const sys = win.getWindowAvoidArea(window.AvoidAreaType.TYPE_SYSTEM);
@@ -21,6 +19,7 @@ function publishInsets(win: window.Window): void {
     hilog.error(DOMAIN, 'testTag', 'inset read failed');
   }
 }
+
 
 export default class EntryAbility extends UIAbility {
   onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): void {

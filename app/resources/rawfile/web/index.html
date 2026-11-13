@@ -222,39 +222,30 @@
         monaco.editor.setTheme(window.__hvoltTheme ? 'vs-dark' : 'vs');
       }
 
-      // Swipe left with three (or four) fingers flips the editor to the chat page, the way a page
-      // turns; swiping right on the chat page turns back. The WebView
-      // consumes multi-touch before ArkUI sees it, so the gesture has to be recognised here.
+      // A three- or four-finger horizontal swipe asks the shell to turn the face. The WebView
+      // owns the touch stream here, so the page cannot let the fingers drive the turn itself;
+      // it reports the finished swipe once, with its direction, and the shell runs the turn.
       (function () {
         var startX = null;
         var startY = null;
-        var fired = false;
-        function report(text) {
-          if (window.hvoltBridge && window.hvoltBridge.log) {
-            window.hvoltBridge.log(text);
-          }
-        }
-        report('chat armed; bridge=' + (window.hvoltBridge ? Object.keys(window.hvoltBridge).join(',') : 'none'));
         document.addEventListener('touchstart', function (e) {
-          if (e.touches.length >= 3) {
+          if (e.touches.length >= 3 && e.touches.length <= 4) {
             startX = e.touches[0].clientX;
             startY = e.touches[0].clientY;
-            fired = false;
           } else {
             startX = null;
           }
         }, { passive: true, capture: true });
-        document.addEventListener('touchmove', function (e) {
-          if (startX === null || fired) {
+        document.addEventListener('touchend', function (e) {
+          if (startX === null) {
             return;
           }
-          var dx = e.touches[0].clientX - startX;
-          var dy = Math.abs(e.touches[0].clientY - startY);
-          if (dx < -60 && dy < 120) {
-            fired = true;
-            report('swipe fired dx=' + dx);
+          var dx = e.changedTouches[0].clientX - startX;
+          var dy = e.changedTouches[0].clientY - startY;
+          startX = null;
+          if (Math.abs(dx) > 60 && Math.abs(dy) < Math.abs(dx)) {
             if (window.hvoltBridge && window.hvoltBridge.openChat) {
-              window.hvoltBridge.openChat();
+              window.hvoltBridge.openChat(dx < 0 ? -1 : 1);
             }
           }
         }, { passive: true, capture: true });

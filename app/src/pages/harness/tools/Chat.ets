@@ -33,7 +33,12 @@ export function registerChatTool(registry: ToolRegistry, ctx: FileContext): void
       }
       const reply = await send(text);
       if (reply.length > MAX_REPLY_CHARS) {
-        return reply.substring(0, MAX_REPLY_CHARS) + '\n…(truncated)';
+        let end = Math.min(MAX_REPLY_CHARS, reply.length);
+        const code = end > 0 ? reply.charCodeAt(end - 1) : 0;
+        if (code >= 0xD800 && code <= 0xDBFF) {
+          end -= 1;
+        }
+        return reply.substring(0, end) + '\n…(truncated)';
       }
       return reply.length === 0 ? '(no text; see tool lines)' : reply;
     }

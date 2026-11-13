@@ -1,4 +1,5 @@
 import { palette, Palette, GAP } from '../model/Palette';
+import { importSdk, SdkImportResult, sdkStatus } from '../model/SdkImport';
 import { DURATION, spring } from '../model/Motion';
 import { connectDevice } from '../model/Actions';
 import { writePref } from '../model/Prefs';
@@ -73,7 +74,6 @@ export struct SettingsSheet {
   @State private llmModel: string = '';
   @State private llmToken: string = '';
   @State private llmEffort: string = '';
-  @State private chatMode: string = 'normal';
   @State private extraPrompt: string = '';
   @State private modelOptions: SelectOption[] = [];
   @State private modelIndex: number = 0;
@@ -106,13 +106,15 @@ export struct SettingsSheet {
   };
   @State private deviceDraft: string = '';
   @State private hint: string = '';
+  /** Result of the last SDK import, shown in place of the status while it matters. */
+  @State private sdkState: string = '';
 
   private p(): Palette {
     return palette(this.dark);
   }
 
   aboutToAppear(): void {
-    this.chatMode = AppStorage.get<string>('chatmode') ?? 'normal';
+    this.sdkState = sdkStatus();
     this.loadHarnessSettings();
     this.deviceDraft = this.device;
     this.devFeedback = this.linkState;
@@ -201,7 +203,11 @@ export struct SettingsSheet {
 
   // Read-only: the SDK is unpacked from the bundled archive on first launch, so this line
   // reports what is on disk rather than offering to change it.
-  private sdkState(): string {
+  //
+  // 名字必须与 `@State sdkState` 区分开：同名时字段压过方法，调用点拿到的是字符串，
+  // 点开设置就抛 TypeError（sdkState is not callable）。字段记的是导入进度，这个方法
+  // 读的是磁盘现状，两者语义本来就不同。
+  private sdkDiskState(): string {
     const dir = FILES + '/.hvolt/sdk';
     let unpacked = false;
     try {
@@ -305,6 +311,52 @@ export struct SettingsSheet {
     .width('100%')
     .height(44)
     .padding({ left: 14, right: 14 })
+    .backgroundColor(this.p().card)
+    .borderRadius(12)
+  }
+
+  @Builder
+  ImportSdkRow() {
+    Column({ space: 6 }) {
+      Row({ space: 10 }) {
+        Text('外部 SDK').fontSize(15).fontColor(this.p().textPrimary)
+        Blank()
+        Text(this.sdkState.length === 0 ? '读取中' : this.sdkState)
+          .fontSize(13)
+          .fontColor(this.p().textSecondary)
+          .maxLines(2)
+          .textAlign(TextAlign.End)
+          .layoutWeight(2)
+      }
+      .width('100%')
+
+      Row({ space: 10 }) {
+        Text('导入 SDK 压缩包')
+          .fontSize(14)
+          .fontColor(this.p().brand)
+          .height(36)
+          .layoutWeight(1)
+          .textAlign(TextAlign.Center)
+          .borderRadius(10)
+          .backgroundColor(this.p().brandSoft)
+          .onClick(() => {
+            this.sdkState = '解压并校验中…';
+            importSdk().then((result: SdkImportResult) => {
+              this.sdkState = result.message;
+            }).catch((err: Error) => {
+              this.sdkState = '导入失败：' + err.message;
+            });
+          })
+      }
+      .width('100%')
+
+      Text('压缩包需含 oh-uni-package.json、openharmony/ets/api、hms/ets/api；校验通过才会替换，旧树留在 .hvolt/sdk.bundled')
+        .fontSize(11)
+        .fontColor(this.p().textTertiary)
+        .width('100%')
+    }
+    .width('100%')
+    .padding({ left: 14, right: 14, top: 10, bottom: 10 })
     .backgroundColor(this.p().card)
     .borderRadius(12)
   }
@@ -538,46 +590,6 @@ export struct SettingsSheet {
 
   /** One settings group, extracted from build() with its content unchanged. */
   @Builder
-  StepsSection() {
-      Column({ space: 8 }) {
-        Row() {
-          Text('工作步骤')
-            .fontSize(15)
-            .fontColor(this.p().textPrimary)
-          Blank()
-          Text('思考与工具调用如何显示')
-            .fontSize(12)
-            .fontColor(this.p().textTertiary)
-        }
-        .width('100%')
-
-        Row({ space: 6 }) {
-          ForEach([['quiet', '简洁'], ['normal', '标准'], ['detail', '详细'], ['full', '完全展开']],
-            (pair: string[]) => {
-              Text(pair[1])
-                .fontSize(12)
-                .fontColor(this.chatMode === pair[0] ? this.p().textPrimary : this.p().textSecondary)
-                .height(34)
-                .layoutWeight(1)
-                .textAlign(TextAlign.Center)
-                .backgroundColor(this.chatMode === pair[0] ? this.p().brandSoft : this.p().bg)
-                .borderRadius(8)
-                .onClick(() => {
-                  this.chatMode = pair[0];
-                  AppStorage.setOrCreate<string>('chatmode', pair[0]);
-                })
-            }, (pair: string[]) => pair[0] + pair[1])
-        }
-        .width('100%')
-      }
-      .width('100%')
-      .padding({ left: 16, right: 16, top: 12, bottom: 12 })
-      .borderRadius(14)
-      .backgroundColor(this.p().card)
-  }
-
-  /** One settings group, extracted from build() with its content unchanged. */
-  @Builder
   ExtraSection() {
       Column({ space: 8 }) {
         Text('附加指令')
@@ -637,12 +649,14 @@ export struct SettingsSheet {
 
           this.EffortSection()
 
-          this.StepsSection()
 
           this.ExtraSection()
 
           this.Section('SDK')
-          this.StatusRow('内置 SDK 目录', this.sdkState())
+          this.StatusRow('内置 SDK 目录', this.sdkDiskState())
+          // Importing is the only way to reach a HMS component: the bundled tree has no `hms/`.
+          // The row reports what is actually on disk, not what was last attempted.
+          this.ImportSdkRow()
 
           this.Section('编辑器')
           this.OptionRow('字号', this.fontLabels(), KEY_FONT)

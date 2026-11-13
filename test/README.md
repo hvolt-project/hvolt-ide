@@ -9,6 +9,8 @@ node --test test/
 
 | File | Covers |
 |---|---|
+| `session.test.ts` | `app/src/pages/harness/session/` — event seq, surface replace, turn recovery, compaction range, JSONL |
+| `recall.test.ts` | `app/src/pages/harness/loop/Recall.ts` — seq spans and body search over the log |
 | `markdown.test.ts` | `app/src/pages/model/Markdown.ts` — blocks, tables, inline markers, code tokenising |
 | `stream.test.ts` | `app/src/pages/harness/loop/Stream.ts` — SSE framing, deltas, tool-call accumulation |
 | `format.test.ts` | `app/src/pages/model/Format.ts` — failure line selection, turn summary, rolling log |

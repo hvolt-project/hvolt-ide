@@ -14,8 +14,16 @@ import { registerBuildTools } from './tools/Build';
 import { registerDeployTool } from './tools/Deploy';
 import { registerLogTools } from './tools/Logs';
 import { registerDeviceTools } from './tools/Device';
+import { registerSandboxTools } from './tools/Sandbox';
+import { registerJobTools } from './tools/Jobs';
+import { registerTodoTools } from './tools/Todo';
+import { registerWebTools } from './tools/Web';
+import { registerUiTools } from './tools/UI';
 import { registerSdkTools } from './tools/Sdk';
 import { registerChatTool } from './tools/Chat';
+import { registerRecallTool } from './tools/Recall';
+import { registerAskTool } from './tools/Ask';
+import { registerSkillTool } from './tools/Skill';
 import { installApprovalGate } from './Approval';
 import { buildSystemPrompt } from './Prompt';
 
@@ -60,8 +68,25 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   registerDeployTool(registry, ctx);
   registerLogTools(registry, ctx);
   registerDeviceTools(registry, ctx);
+  registerSandboxTools(registry, ctx);
+  registerJobTools(registry, ctx);
+  registerTodoTools(registry, ctx);
+  registerWebTools(registry, ctx);
+  registerUiTools(registry, ctx);
   registerSdkTools(registry);
   registerChatTool(registry, ctx);
+  registerRecallTool(registry, ctx);
+  registerAskTool(registry, ctx);
+  registerSkillTool(registry, ctx);
+  // The surface the model will see, named once at startup: a tool that fails to register is
+  // otherwise invisible until the model asks for it and gets "no such tool".
+  const names: string[] = [];
+  for (const spec of TOOLS.descriptors()) {
+    names.push(spec['name'] as string);
+  }
+  hilog.info(0x0000, 'hvoltide', 'tools registered: %{public}d %{public}s', names.length,
+    names.join(','));
+
   // Reported once at startup: proves the shipped prompt file is readable from the bundle.
   buildSystemPrompt().then((text: string) => {
     hilog.info(0x0000, 'hvoltide', 'system prompt: %{public}d chars', text.length);

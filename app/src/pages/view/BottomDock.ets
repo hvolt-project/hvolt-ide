@@ -19,6 +19,8 @@ export struct BottomDock {
   @Prop bottomInset: number = 0;
   @Prop statusText: string = '';
   @Prop statusTone: number = 0;
+  // Session figures for the row above the strip. Passed as loose numbers because ArkUI copies
+  // plain props cheaply; a stats object would be deep-copied on every repaint.
   @Prop log: string = '';
   @Prop current: string = '';
   @Prop hlog: string = '';
@@ -227,6 +229,7 @@ export struct BottomDock {
             .fontSize(11)
             .fontColor(this.p().textTertiary)
             .maxLines(1)
+            .flexShrink(0)
           if (this.link !== 2 && this.linkText.length > 0) {
             Text(this.linkText)
               .fontSize(11)
@@ -250,12 +253,13 @@ export struct BottomDock {
               this.panelTab = 0;
             });
           })
-        Blank()
+
+
         Text('Ln ' + this.position())
           .fontSize(11)
           .fontColor(this.p().textTertiary)
           .maxLines(1)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
+          .flexShrink(0)
       }
       .width('100%')
       // Only the gesture bar's own height is left below the strip; the safe-area value is
@@ -264,6 +268,7 @@ export struct BottomDock {
       .padding({ left: 14, right: 14, bottom: 10 })
       .alignItems(VerticalAlign.Center)
       .backgroundColor(this.p().bg)
+
     }
     .width('100%')
     // The glass plate above animates its height on every tab switch; while the material
@@ -272,6 +277,9 @@ export struct BottomDock {
     .backgroundColor(this.p().bg)
   }
 
+  /** 127.0.0.1:18710 这类本机转发地址只留端口，整条状态行才放得下。 */
+  /** 第一段：走到哪了 —— 轮、步，以及最近一步的解码速率。 */
+  /** 第二段：花了多少 —— 累计 token 与缓存命中率。 */
   private position(): string {
     return this.pos.length === 0 ? '—' : this.pos;
   }
