@@ -254,7 +254,6 @@ export struct BottomDock {
             });
           })
 
-
         Text('Ln ' + this.position())
           .fontSize(11)
           .fontColor(this.p().textTertiary)
@@ -277,9 +276,7 @@ export struct BottomDock {
     .backgroundColor(this.p().bg)
   }
 
-  /** 127.0.0.1:18710 这类本机转发地址只留端口，整条状态行才放得下。 */
-  /** 第一段：走到哪了 —— 轮、步，以及最近一步的解码速率。 */
-  /** 第二段：花了多少 —— 累计 token 与缓存命中率。 */
+  /** 状态行的位置段：本机转发地址只留端口，整条状态行才放得下。 */
   private position(): string {
     return this.pos.length === 0 ? '—' : this.pos;
   }

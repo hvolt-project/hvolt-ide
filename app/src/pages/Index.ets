@@ -13,7 +13,7 @@ import { Bp } from './model/Bridge';
 import { Session } from './model/Session';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
-import { TopBar } from './view/TopBar';
+import { ChromeBar } from './view/ChromeBar';
 import { ActivityBar } from './view/ActivityBar';
 import { LeftPane } from './view/SidePanes';
 import { BottomDock } from './view/BottomDock';
@@ -510,22 +510,6 @@ struct Index {
     }
   }
 
-  // project › path › file, the same trail the drawing puts under the tab strip
-  private crumbs(): string[] {
-    const out: string[] = [];
-    if (this.projectName.length > 0) {
-      out.push(this.projectName);
-    }
-    if (this.currentRel.length === 0) {
-      return out;
-    }
-    const parts = this.currentRel.split('/');
-    for (let i = 0; i < parts.length; i++) {
-      out.push(parts[i]);
-    }
-    return out;
-  }
-
   // The strip above the bar is the window's status area, so its colour is set on the
   // window rather than approximated with padding or an extra plate.
   onAppearance(): void {
@@ -616,64 +600,6 @@ struct Index {
     });
   }
 
-  /** Toolbar and breadcrumb: the strip that stays put above every pane. */
-  @Builder
-  Chrome() {
-    Row() {
-      Column() {
-        TopBar({
-      dark: this.isDark(),
-      showToggle: this.bp !== 'expanded',
-      onToggle: () => {
-        animateTo({ duration: DURATION, curve: spring() }, () => {
-          this.leftOpen = !this.leftOpen;
-        });
-      },
-      onSelect: (rel: string) => {
-        this.session.openFile(rel);
-      },
-      onClose: (rel: string) => {
-        this.requestCloseTab(rel);
-      },
-      onBuild: () => {
-        this.buildProject();
-      },
-      onInstall: () => {
-        this.session.deploy();
-      },
-      onStart: () => {
-        this.session.launch();
-      }
-        })
-
-        Row({ space: 6 }) {
-          ForEach(this.crumbs(), (seg: string, i: number) => {
-            if (i > 0) {
-              Text('›')
-                .fontSize(11)
-                .fontColor(this.p().textTertiary)
-            }
-            Text(seg)
-              .fontSize(11)
-              .fontColor(i === 0 ? this.p().textSecondary : this.p().textTertiary)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-          }, (seg: string, i: number) => i.toString() + seg)
-        }
-        .width('100%')
-        .height(22)
-        .padding({ left: 14, right: 14 })
-        .alignItems(VerticalAlign.Center)
-        .backgroundColor(this.p().bg)
-      }
-      .width('100%')
-    }
-    .width('100%')
-    .height(this.chromeHidden ? 0 : 62)
-    .opacity(this.chromeHidden ? 0 : 1)
-    .clip(true)
-    .animation({ duration: DURATION, curve: Curve.FastOutSlowIn })
-  }
 
 
   build() {
@@ -693,7 +619,30 @@ struct Index {
         .backgroundColor(this.p().bg)
 
       Column() {
-      this.Chrome()
+        ChromeBar({
+          dark: this.isDark(),
+          showToggle: this.bp !== 'expanded',
+          onToggle: () => {
+            animateTo({ duration: DURATION, curve: spring() }, () => {
+              this.leftOpen = !this.leftOpen;
+            });
+          },
+          onSelectTab: (rel: string) => {
+            this.session.openFile(rel);
+          },
+          onCloseTab: (rel: string) => {
+            this.requestCloseTab(rel);
+          },
+          onBuild: () => {
+            this.buildProject();
+          },
+          onInstall: () => {
+            this.session.deploy();
+          },
+          onStart: () => {
+            this.session.launch();
+          }
+        })
 
         Row() {
           if (this.bp === 'expanded') {
