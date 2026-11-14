@@ -57,3 +57,26 @@ export function pairToolResults(messages: ChatMessage[]): ChatMessage[] {
   }
   return out;
 }
+
+/**
+ * 配对之后仍然违约的位置，供发送前记日志用。正常情况下应当恒为空——
+ * 一旦不为空，服务端会用一条 400 拒绝整轮，而那正是最难从客户端现象反推的错误。
+ */
+export function unpairedCalls(messages: ChatMessage[]): string[] {
+  const bad: string[] = [];
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    if (message.role !== 'assistant' || message.toolCalls.length === 0) {
+      continue;
+    }
+    let at = i + 1;
+    for (const call of message.toolCalls) {
+      const next = at < messages.length ? messages[at] : undefined;
+      if (next === undefined || next.role !== 'tool' || next.toolCallId !== call.id) {
+        bad.push(call.id);
+      }
+      at += 1;
+    }
+  }
+  return bad;
+}

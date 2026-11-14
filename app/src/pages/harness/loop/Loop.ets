@@ -10,7 +10,7 @@ import util from '@ohos.util';
 import { TOOLS, ToolSpec } from '../mcp/Registry';
 import { AbortFlag, StreamSink, streamChat } from './Client';
 import { runBatch } from './ToolBatch';
-import { pairToolResults } from './Wire';
+import { pairToolResults, unpairedCalls } from './Wire';
 import { dispatch } from './Dispatch';
 import { LlmConfig } from './Settings';
 import { ChatMessage, ToolCall, Usage, assistantMessage, emptyUsage, runtimeMessage, systemMessage, userMessage } from './Types';
@@ -246,7 +246,14 @@ export class ChatSession {
         let firstDelta = 0;
         let roundUsage: Usage = emptyUsage();
         let finishReason = '';
-        await this.transport(config, this.attachShots(pairToolResults(this.session.messages())), {
+        const outbound = pairToolResults(this.session.messages());
+        // 违约就是服务端会用 400 拒掉整轮的那种状态；先在这里说清楚是哪个调用。
+        const broken = unpairedCalls(outbound);
+        if (broken.length > 0) {
+          hilog.warn(0x0000, 'hvoltide', 'request would break the tool protocol: %{public}s',
+            broken.join(','));
+        }
+        await this.transport(config, this.attachShots(outbound), {
           onText: (delta: string) => {
             if (firstDelta === 0) {
               firstDelta = Date.now();

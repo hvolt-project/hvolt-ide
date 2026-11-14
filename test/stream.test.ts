@@ -9,7 +9,9 @@ import assert from 'node:assert/strict';
 import { totalTokensOf } from '../app/src/pages/harness/loop/Types.ts';
 
 import { applyDelta, collectCalls, cutLines, ssePayload } from '../app/src/pages/harness/loop/Stream.ts';
+import { pairToolResults, unpairedCalls } from '../app/src/pages/harness/loop/Wire.ts';
 import type { ToolCallChunk } from '../app/src/pages/harness/loop/Stream.ts';
+import type { ChatMessage } from '../app/src/pages/harness/loop/Types.ts';
 
 function delta(content: string): string {
   return JSON.stringify({ choices: [{ delta: { content: content } }] });
@@ -140,4 +142,34 @@ test('a delta with no choices leaves the text untouched', () => {
   const text: string[] = [];
   applyDelta(JSON.stringify({ choices: [] }), text, new Map(), {});
   assert.equal(text.length, 0);
+});
+
+test('pairing pulls tool results next to their call, in call order', () => {
+  const messages = [
+    { id: 0, role: 'assistant', source: 'model', content: '', reasoning: '', context: '', images: [],
+      toolCalls: [{ id: 'c1', name: 'read', argumentsJson: '{}' }, { id: 'c2', name: 'grep', argumentsJson: '{}' }], toolCallId: '' },
+    { id: 1, role: 'user', source: 'human', content: '插进来的消息', reasoning: '', context: '', images: [],
+      toolCalls: [], toolCallId: '' },
+    { id: 2, role: 'tool', source: 'tool', content: 'second', reasoning: '', context: '', images: [],
+      toolCalls: [], toolCallId: 'c2' },
+    { id: 3, role: 'tool', source: 'tool', content: 'first', reasoning: '', context: '', images: [],
+      toolCalls: [], toolCallId: 'c1' }
+  ] as ChatMessage[];
+  assert.ok(unpairedCalls(messages).length > 0, 'the log as written breaks the protocol');
+  const fixed = pairToolResults(messages);
+  assert.deepEqual(unpairedCalls(fixed), [], 'after pairing the request is valid');
+  assert.deepEqual(fixed.slice(0, 3).map((m) => m.toolCallId), ['', 'c1', 'c2']);
+  assert.equal(fixed.length, messages.length, 'nothing is dropped');
+});
+
+test('a call with no result gets a placeholder that keeps the protocol valid', () => {
+  const messages = [
+    { id: 0, role: 'assistant', source: 'model', content: '', reasoning: '', context: '', images: [],
+      toolCalls: [{ id: 'c9', name: 'shell', argumentsJson: '{}' }], toolCallId: '' }
+  ] as ChatMessage[];
+  const fixed = pairToolResults(messages);
+  assert.equal(fixed.length, 2);
+  assert.equal(fixed[1].role, 'tool');
+  assert.equal(fixed[1].toolCallId, 'c9');
+  assert.deepEqual(unpairedCalls(fixed), []);
 });
