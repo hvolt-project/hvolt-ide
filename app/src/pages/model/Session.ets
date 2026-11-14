@@ -659,7 +659,9 @@ export class Session {
       // The endpoint talks to the same session the page shows: one conversation, one history.
       chatSend: async (text: string): Promise<string> => {
         let reply = '';
-        await this.chatSend(text, (kind: string, body: string) => {
+        // 第二个参数是 images；漏掉它会让回调落进 images、onEvent 变 undefined，
+        // 于是回复流一开头就 "undefined is not callable"。
+        await this.chatSend(text, [], (kind: string, body: string) => {
           if (kind === 'text') {
             reply += body;
           }
