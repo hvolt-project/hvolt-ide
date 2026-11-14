@@ -13,12 +13,12 @@ import { Bp } from './model/Bridge';
 import { Session } from './model/Session';
 import { publishSession } from './model/Storage';
 import { directedTarget, dragAngle, flipsArmable, releaseTarget } from './model/Flip';
+import { appendLine, readStats, rebuildLines } from './model/ChatView';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
 import { IdeFace } from './view/IdeFace';
 import { HarnessFace } from './view/HarnessFace';
 import { ChatLine } from './view/ChatPanel';
-import { makeLine } from './view/ChatBlocks';
 import { setChatHandler } from './model/Bridge';
 import { LlmConfig, loadLlmConfig } from './harness/loop/Settings';
 import { SettingsSheet } from './view/SettingsSheet';
@@ -343,87 +343,31 @@ struct Index {
   }
 
   private appendChat(kind: string, text: string): void {
-    const lines: ChatLine[] = this.chatLines.slice();
-    const last = lines.length > 0 ? lines[lines.length - 1] : undefined;
-
-    if (kind === 'text') {
-      if (last !== undefined && last.kind === 'assistant') {
-        lines[lines.length - 1] = makeLine('assistant', last.text + text, '');
-      } else {
-        lines.push(makeLine('assistant', text, ''));
-      }
-      this.chatLines = lines;
-      return;
-    }
-    if (kind === 'thought') {
-      if (last !== undefined && last.kind === 'thought') {
-        lines[lines.length - 1] = makeLine('thought', last.text + text, '');
-      } else {
-        lines.push(makeLine('thought', text, ''));
-      }
-      this.chatLines = lines;
-      return;
-    }
-    if (kind === 'tool') {
-      // "name args" from the loop: the name is what the process line shows, the args are detail.
-      const cut = text.indexOf(' ');
-      const name = cut > 0 ? text.substring(0, cut) : text;
-      const args = cut > 0 ? text.substring(cut + 1) : '';
-      lines.push(makeLine('tool', args, name));
-    } else if (kind === 'result') {
-      const name = last !== undefined && last.kind === 'tool' ? last.name : '';
-      lines.push(makeLine('tool', text, name));
-    } else if (kind === 'error') {
-      lines.push(makeLine('error', text, ''));
-    } else if (kind === 'user') {
-      lines.push(makeLine('user', text, ''));
-    }
-    this.chatLines = lines;
+    this.chatLines = appendLine(this.chatLines, kind, text);
     this.syncStats();
   }
 
   /** 状态栏的数字跟着会话走：每次刷新转写都重取一次。 */
   private syncStats(): void {
     // 状态栏是装饰，不能因为它读不出来就把启动流程打断。
-    try {
-      const s = this.session.statsForBar();
-      this.statTurns = s.turns;
-      this.statSteps = s.steps;
-      this.statTokens = s.totalTokens;
-      this.statCache = s.cacheHit;
-      this.statPressure = s.pressure;
-      this.statRate = s.rate;
-      hilog.info(0x0000, 'hvoltide', 'stats: turns=%{public}d steps=%{public}d tokens=%{public}d cache=%{public}d',
-        s.turns, s.steps, s.totalTokens, s.cacheHit);
-    } catch (error) {
-      const e = error as Error;
-      hilog.warn(0x0000, 'hvoltide', 'stats unavailable: %{public}s', e.message === undefined ? 'unknown' : e.message);
+    const s = readStats(this.session);
+    if (s === undefined) {
+      hilog.warn(0x0000, 'hvoltide', 'stats unavailable');
+      return;
     }
+    this.statTurns = s.turns;
+    this.statSteps = s.steps;
+    this.statTokens = s.totalTokens;
+    this.statCache = s.cacheHit;
+    this.statPressure = s.pressure;
+    this.statRate = s.rate;
+    hilog.info(0x0000, 'hvoltide', 'stats: turns=%{public}d steps=%{public}d tokens=%{public}d cache=%{public}d',
+      s.turns, s.steps, s.totalTokens, s.cacheHit);
   }
 
   /** Rebuilds the transcript from session history: a restore, or a project switch. */
   private syncChatFromHistory(): void {
-    const lines: ChatLine[] = [];
-    for (const message of this.session.chat.transcript()) {
-      if (message.role === 'user') {
-        // 运行时注入不是一个说过的话，但也不是该藏起来的东西：标成 injection 行，可折叠
-        if (message.source === 'runtime') {
-          lines.push(makeLine('injection', message.content, '上下文'));
-          continue;
-        }
-        lines.push(makeLine('user', message.content, ''));
-      } else if (message.role === 'assistant') {
-        if (message.reasoning.length > 0) {
-          lines.push(makeLine('thought', message.reasoning, ''));
-        }
-        if (message.content.length > 0) {
-          lines.push(makeLine('assistant', message.content, ''));
-        }
-      } else if (message.role === 'tool') {
-        lines.push(makeLine('tool', message.content, ''));
-      }
-    }
-    this.chatLines = lines;
+    this.chatLines = rebuildLines(this.session.chat.transcript());
     this.syncStats();
   }
 
