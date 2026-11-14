@@ -10,6 +10,7 @@ import util from '@ohos.util';
 import { TOOLS, ToolSpec } from '../mcp/Registry';
 import { AbortFlag, StreamSink, streamChat } from './Client';
 import { runBatch } from './ToolBatch';
+import { pairToolResults } from './Wire';
 import { dispatch } from './Dispatch';
 import { LlmConfig } from './Settings';
 import { ChatMessage, ToolCall, Usage, assistantMessage, emptyUsage, runtimeMessage, systemMessage, userMessage } from './Types';
@@ -244,7 +245,7 @@ export class ChatSession {
         const requestStart = Date.now();
         let firstDelta = 0;
         let roundUsage: Usage = emptyUsage();
-        await this.transport(config, this.attachShots(this.session.messages()), {
+        await this.transport(config, this.attachShots(pairToolResults(this.session.messages())), {
           onText: (delta: string) => {
             if (firstDelta === 0) {
               firstDelta = Date.now();
