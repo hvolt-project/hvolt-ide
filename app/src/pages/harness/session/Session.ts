@@ -51,6 +51,9 @@ export class Session {
   private events: SessionEvent[] = [];
   contextWindow: number = 0;
   reservedCompletionTokens: number = 8192;
+  // 当前轮与步，由 turn/start、step/start 事件带入，工具事件照抄。
+  private turnNow: number = 0;
+  private stepNow: number = 0;
   private compactionStartSeq: number = -1;
   private compactionId: string = '';
 
@@ -85,6 +88,7 @@ export class Session {
         sourceEventSeqs: event.sourceEventSeqs
       };
       state = applySurface(state, safe);
+      this.trackTurn(safe);
       if (event.type === 'request/header') {
         header = data as Object;
       }
@@ -176,7 +180,41 @@ export class Session {
     if (event.type === 'request/header') {
       this.header = event.data as Object;
     }
+    this.trackTurn(event);
     return event;
+  }
+
+  /** 事件的 turn/step 由 turn/start、step/start 带进来；工具事件要照抄当时的编号。 */
+  private trackTurn(event: SessionEvent): void {
+    const data = event.data as Record<string, Object>;
+    if (event.type === 'turn/start') {
+      this.turnNow = numberOrZero(data['turn']);
+    } else if (event.type === 'step/start') {
+      this.stepNow = numberOrZero(data['step']);
+    }
+  }
+
+  /**
+   * 工具调用在它开跑**之前**写下：事后才能区分「根本没开始」与「开始了但结果未知」。
+   * 这是 ToolBatch 的 BatchRecorder 约定，时间由日志自己盖，`at` 只为接口对称。
+   */
+  noteToolCall(call: ToolCall, at: number): void {
+    this.append('tool/call', {
+      turn: this.turnNow,
+      step: this.stepNow,
+      callId: call.id,
+      name: call.name,
+      arguments: call.argumentsJson
+    });
+  }
+
+  /** 工具的结果按 surface 事件落盘，模型下一次请求就在消息里看到它。 */
+  appendToolResult(callId: string, text: string, isError: boolean, at: number): void {
+    this.append('tool/result', {
+      turn: this.turnNow,
+      step: this.stepNow,
+      message: toolMessage(callId, text)
+    }, 'append');
   }
 
   // --- 投影 ------------------------------------------------------------------------------------
@@ -313,4 +351,8 @@ function messageOf(event: SessionEvent): ChatMessage | undefined {
     default:
       return undefined;
   }
+}
+/** 事件里的编号可能是缺失或非数字，按 0 处理，免得把 NaN 写进日志。 */
+function numberOrZero(value: Object | undefined): number {
+  return typeof value === 'number' ? value as number : 0;
 }
