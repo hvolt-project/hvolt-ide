@@ -449,15 +449,32 @@ export struct ChatPanel {
             ForEach(this.askOptionsOf(), (option: AskOption) => {
               Row({ space: 10 }) {
                 Stack() {
-                  Circle({ width: 16, height: 16 })
-                    .fill(this.askPicked.indexOf(option.label) >= 0
-                      ? this.p().brandSoft : this.p().bg)
-                    .stroke(this.askPicked.indexOf(option.label) >= 0
-                      ? this.p().brand : this.p().divider)
-                    .strokeWidth(1.5)
+                  // 图形即模式：单选画圆，多选画方框，选中的标记也不同（圆点 / 勾）。
+                  if (this.askMultiOf()) {
+                    Rect({ width: 16, height: 16 })
+                      .radius(4)
+                      .fill(this.askPicked.indexOf(option.label) >= 0
+                        ? this.p().brandSoft : this.p().bg)
+                      .stroke(this.askPicked.indexOf(option.label) >= 0
+                        ? this.p().brand : this.p().divider)
+                      .strokeWidth(1.5)
+                  } else {
+                    Circle({ width: 16, height: 16 })
+                      .fill(this.askPicked.indexOf(option.label) >= 0
+                        ? this.p().brandSoft : this.p().bg)
+                      .stroke(this.askPicked.indexOf(option.label) >= 0
+                        ? this.p().brand : this.p().divider)
+                      .strokeWidth(1.5)
+                  }
                   if (this.askPicked.indexOf(option.label) >= 0) {
-                    Circle({ width: 7, height: 7 })
-                      .fill(this.p().brand)
+                    if (this.askMultiOf()) {
+                      Text('✓')
+                        .fontSize(11)
+                        .fontColor(this.p().brand)
+                    } else {
+                      Circle({ width: 7, height: 7 })
+                        .fill(this.p().brand)
+                    }
                   }
                 }
                 .width(16)
@@ -485,14 +502,12 @@ export struct ChatPanel {
                 ? this.p().brandSoft : this.p().bg)
               .borderRadius(10)
               .onClick(() => {
-                // 单选是 radio：选中即生效，没有提交步骤（多选仍按勾选累积）
+                // 点选只改选择，提交由下面的按钮决定：点一下就提交没有反悔余地。
+                const at = this.askPicked.indexOf(option.label);
                 if (!this.askMultiOf()) {
-                  this.actions.answerAsk([option.label], '');
-                  this.askPicked = [];
-                  this.askCustom = '';
+                  this.askPicked = at >= 0 ? [] : [option.label];
                   return;
                 }
-                const at = this.askPicked.indexOf(option.label);
                 const next: string[] = this.askPicked.slice();
                 if (at >= 0) {
                   next.splice(at, 1);
@@ -519,14 +534,18 @@ export struct ChatPanel {
               })
 
             Row({ space: 10 }) {
-              if (this.askMultiOf() && (this.askPicked.length > 0 || this.askCustom.length > 0)) {
-                Text('提交')
-                  .fontSize(13)
-                  .fontColor(this.p().brand)
-                  .onClick(() => {
-                    this.submitAnswer();
-                  })
-              }
+              // 两种模式都常驻提交按钮：选择与提交分开，选错了还能改。
+              Text('提交')
+                .fontSize(13)
+                .fontColor(this.askPicked.length > 0 || this.askCustom.length > 0
+                  ? this.p().brand : this.p().textTertiary)
+                .padding({ left: 10, right: 10, top: 6, bottom: 6 })
+                .borderRadius(8)
+                .backgroundColor(this.askPicked.length > 0 || this.askCustom.length > 0
+                  ? this.p().brandSoft : this.p().bg)
+                .onClick(() => {
+                  this.submitAnswer();
+                })
               Blank()
               // DSH 只有 dismiss 一种退出（Dismiss all questions）：取消就是取消，
               // 不给模型一个空答案冒充"跳过"。

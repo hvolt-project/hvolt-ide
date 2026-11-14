@@ -253,10 +253,10 @@ export class Session {
     this.onChange();
     const summary = this.describeAnswers(answers);
     if (resolve !== null) {
+      // 只把答案交给工具：工具结果紧接着就会落进 surface，答案在那条里。
+      // 这里若再 inject 一条用户消息，它会插在 tool_call 与 tool_result 之间，
+      // 服务端会以「tool_call 后必须紧跟对应 tool 消息」为由整轮拒绝。
       resolve(formatAnswers(answers));
-      // Recorded either way: without it the transcript shows a tool result and no sign of what
-      // was asked or chosen.
-      this.chat.inject('已答 ' + summary);
       return;
     }
     if (pending) {
