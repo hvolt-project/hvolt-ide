@@ -3,7 +3,7 @@ import hilog from '@ohos.hilog';
 // in ./model/Session; the session publishes its fields to AppStorage and the panes
 // subscribe to them, so this file never threads data through intermediate props.
 import { common } from '@kit.AbilityKit';
-import { display, window } from '@kit.ArkUI';
+import { window } from '@kit.ArkUI';
 
 import { AskQuestion } from './model/Ask';
 import { GAP, palette, Palette } from './model/Palette';
@@ -13,6 +13,7 @@ import { Session } from './model/Session';
 import { publishSession } from './model/Storage';
 import { directedTarget, dragAngle, flipsArmable, releaseTarget } from './model/Flip';
 import { appendLine, readStats, rebuildLines } from './model/ChatView';
+import { frameHeight, measureScreen, paintStatusBar } from './model/WindowChrome';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
 import { IdeFace } from './view/IdeFace';
@@ -222,17 +223,11 @@ struct Index {
     }
   }
 
-  // "100%" resolves inside the safe area; the page origin already sits below the status
-  // bar, so the frame is the physical height minus that inset.
+  // 屏幕尺寸归窗口层：旋转与键盘都在那里报事件，这里只存下来。
   private refreshScreenHeight(): void {
-    try {
-      const display0 = display.getDefaultDisplaySync();
-      this.screenH = px2vp(display0.height);
-      this.screenW = px2vp(display0.width);
-    } catch (e) {
-      this.screenH = 0;
-      this.screenW = 0;
-    }
+    const size = measureScreen();
+    this.screenH = size.h;
+    this.screenW = size.w;
   }
 
   // 翻到指定面。活动栏图标走这里：不跟手，直接一段完整翻转。
@@ -313,9 +308,7 @@ struct Index {
   }
 
   private frame(): string | number {
-    // 按屏幕高减状态栏写死，而不是 '100%'：'100%' 参照的是页面布局盒，而布局盒被系统
-    // 按底部避让裁掉了 98px，面就停在手势条上沿，底下露出窗口底色。
-    return this.screenH > 0 ? this.screenH - this.topInset : '100%';
+    return frameHeight(this.screenH, this.topInset);
   }
 
   private applyBp(bp: Bp): void {
@@ -402,15 +395,8 @@ struct Index {
   }
 
   private async paintSystemBar(): Promise<void> {
-    try {
-      const win = await window.getLastWindow(getContext(this));
-      await win.setWindowSystemBarProperties({
-        statusBarColor: this.p().bg,
-        statusBarContentColor: this.isDark() ? '#F3F5F7' : '#111827'
-      });
-    } catch (e) {
-      console.error('status bar: ' + JSON.stringify(e));
-    }
+    const ctx = getContext(this) as common.UIAbilityContext;
+    await paintStatusBar(ctx, this.p().bg, this.isDark());
   }
 
   private buildProject(): void {
