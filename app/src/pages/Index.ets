@@ -172,10 +172,14 @@ struct Index {
     } catch (e) {
     }
     this.session.onChange = () => {
-      this.publish();
-      this.syncChatFromHistory();
+      this.schedulePublish();
       this.askQuestions = this.session.askQuestions;
       this.askIndex = this.session.askIndex;
+    };
+    // 换工程、从磁盘恢复：这里才重建整份转写，流式追加不重建。
+    this.session.onRestore = () => {
+      this.syncChatFromHistory();
+      this.schedulePublish();
     };
     loadLlmConfig().then((config: LlmConfig) => {
       this.modelLabel = config.model;
@@ -186,6 +190,7 @@ struct Index {
       this.flipToDir(dir);
     });
     this.session.start(() => {
+      this.syncChatFromHistory();
       this.publish();
     });
     this.layout = new LayoutWatcher(
@@ -335,7 +340,36 @@ struct Index {
 
   private appendChat(kind: string, text: string): void {
     this.chatLines = appendLine(this.chatLines, kind, text);
-    this.syncStats();
+    this.scheduleStats();
+  }
+
+  /**
+   * 发布与统计都按帧合并：一次流式回合里每条 delta 都会触发会话变更，逐条发布与重算
+   * 会把主线程排满（日志里那串重复的 stats 就是证据），合并到每帧一次即可。
+   */
+  private publishPending: boolean = false;
+  private statsPending: boolean = false;
+
+  private schedulePublish(): void {
+    if (this.publishPending) {
+      return;
+    }
+    this.publishPending = true;
+    setTimeout(() => {
+      this.publishPending = false;
+      this.publish();
+    }, 16);
+  }
+
+  private scheduleStats(): void {
+    if (this.statsPending) {
+      return;
+    }
+    this.statsPending = true;
+    setTimeout(() => {
+      this.statsPending = false;
+      this.syncStats();
+    }, 16);
   }
 
   /** 状态栏的数字跟着会话走：每次刷新转写都重取一次。 */

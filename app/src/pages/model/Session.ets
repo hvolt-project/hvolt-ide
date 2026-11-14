@@ -121,6 +121,12 @@ export class Session {
   rightOpen: boolean = false;
   onChange: () => void = () => {
   };
+  /**
+   * 转写被整体换掉时通知一次：换工程、从磁盘恢复。流式追加走 onChange，不必重建，
+   * 否则每条事件都要把整份对话重新拼一遍。
+   */
+  onRestore: () => void = () => {
+  };
 
   /** The questions a tool is waiting on; empty when nothing is pending. */
   askQuestions: AskQuestion[] = [];
@@ -368,6 +374,7 @@ export class Session {
       }
     }
     // 读完历史就通知界面：转写、统计都是从这里恢复的，不通知就一直是空的。
+    this.onRestore();
     this.onChange();
   }
 
