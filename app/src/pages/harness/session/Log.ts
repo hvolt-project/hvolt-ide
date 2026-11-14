@@ -8,9 +8,8 @@
 //
 // 因此 load() 要么给出一份完整的事件列表，要么给出失败原因，没有第三种结果。
 
-import fs from '@ohos.file.fs';
-import { KNOWN_EVENT_TYPES } from './Events';
-import type { SessionEvent, SessionEventType, SessionSeq, SurfaceOp } from './Events';
+import { KNOWN_EVENT_TYPES } from './Events.ts';
+import type { SessionEvent, SessionEventType, SessionSeq, SurfaceOp } from './Events.ts';
 
 /** 读回的结果：要么完整，要么带原因失败。 */
 export interface LoadResult {
@@ -22,15 +21,32 @@ export interface LoadResult {
   lines: number;
 }
 
+/**
+ * 落盘需要的三个动作。设备侧由 ./FsStorage 注入（@ohos.file.fs 的实现）；
+ * 纯逻辑测试不注入，日志就只留在内存里——否则测试连 import 都过不去。
+ */
+export interface LogStorage {
+  exists(path: string): boolean;
+  read(path: string): string;
+  append(path: string, line: string): void;
+}
+
 export class SessionLog {
   private readonly path: string;
+  private readonly storage: LogStorage | undefined;
   private cache: SessionEvent[] = [];
   private loaded: boolean = false;
   /** 磁盘上已有的非空行数，续写从这里接。 */
   private lines: number = 0;
 
-  constructor(path: string) {
+  constructor(path: string, storage?: LogStorage) {
     this.path = path;
+    this.storage = storage;
+  }
+
+  /** 有路径又有落盘实现才走磁盘；缺一个就只走内存。 */
+  private persistent(): boolean {
+    return this.path.length > 0 && this.storage !== undefined;
   }
 
   /** 读回全部事件。路径为空时没有磁盘内容，视为空日志。 */
@@ -38,15 +54,16 @@ export class SessionLog {
     this.cache = [];
     this.loaded = true;
     this.lines = 0;
-    if (this.path.length === 0) {
+    if (!this.persistent()) {
       return { ok: true, events: this.cache, reason: '', lines: 0 };
     }
     let text = '';
     try {
-      if (!fs.accessSync(this.path)) {
+      const storage = this.storage as LogStorage;
+      if (!storage.exists(this.path)) {
         return { ok: true, events: this.cache, reason: '', lines: 0 };
       }
-      text = fs.readTextSync(this.path);
+      text = storage.read(this.path);
     } catch (error) {
       return {
         ok: false,
@@ -144,20 +161,14 @@ export class SessionLog {
 
   /** 追加一条事件行。路径为空时只在内存里。 */
   write(event: SessionEvent): void {
-    if (this.path.length === 0) {
+    if (!this.persistent()) {
       this.cache.push(event);
       this.lines += 1;
       return;
     }
     // 每行自带结尾换行：追加写会把两批内容首尾相接，少了它最后一条与下一条会粘成一行。
     const line = JSON.stringify(event) + '\n';
-    const file = fs.openSync(this.path, fs.OpenMode.CREATE | fs.OpenMode.READ_WRITE | fs.OpenMode.APPEND);
-    try {
-      fs.writeSync(file.fd, line);
-      fs.fsyncSync(file.fd);
-    } finally {
-      fs.closeSync(file);
-    }
+    (this.storage as LogStorage).append(this.path, line);
     this.cache.push(event);
     this.lines += 1;
   }

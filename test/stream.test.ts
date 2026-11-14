@@ -6,6 +6,7 @@
 
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { totalTokensOf } from '../app/src/pages/harness/loop/Types.ts';
 
 import { applyDelta, collectCalls, cutLines, ssePayload } from '../app/src/pages/harness/loop/Stream.ts';
 import type { ToolCallChunk } from '../app/src/pages/harness/loop/Stream.ts';
@@ -83,12 +84,12 @@ test('usage is reported when present and tolerates missing fields', () => {
     usage: { prompt_tokens: 10, completion_tokens: 3, total_tokens: 13 },
     choices: []
   });
-  applyDelta(payload, [], new Map(), { onUsage: (u) => seen.push(u.totalTokens) });
+  applyDelta(payload, [], new Map(), { onUsage: (u) => seen.push(totalTokensOf(u)) });
   assert.deepEqual(seen, [13]);
 
   const partial: number[] = [];
   applyDelta(JSON.stringify({ usage: {}, choices: [] }), [], new Map(),
-    { onUsage: (u) => partial.push(u.totalTokens) });
+    { onUsage: (u) => partial.push(totalTokensOf(u)) });
   assert.deepEqual(partial, [0]);
 });
 

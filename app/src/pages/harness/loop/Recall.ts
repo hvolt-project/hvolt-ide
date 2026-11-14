@@ -9,6 +9,7 @@
 // ranges a compaction hid from the model.
 
 import type { SessionEvent } from '../session/Events.ts';
+import type { ToolCall } from './Types.ts';
 import { ASSISTANT_MESSAGE, SYSTEM_MESSAGE, TOOL_RESULT, USER_MESSAGE } from '../session/Events.ts';
 
 /** Longest single message handed back, so one recall cannot refill the context it was saving. */
@@ -58,6 +59,42 @@ function isMessageType(event: SessionEvent): boolean {
 }
 
 /** Every message inside an inclusive seq range, oldest first. */
+
+/**
+ * 事件里的消息体。现在的日志是 {type, seq, time, data:{message}}；早期日志把 content/calls
+ * 摊在顶层。两种都要能读，否则 recall 对着新日志会直接抛 event.calls is not iterable。
+ */
+function bodyOf(event: SessionEvent): string {
+  const data = event.data as Record<string, Object> | undefined;
+  if (data !== undefined && data !== null) {
+    const message = data['message'];
+    if (message !== undefined && message !== null) {
+      const content = (message as Record<string, Object>)['content'];
+      if (typeof content === 'string') {
+        return content as string;
+      }
+    }
+  }
+  const flat = (event as Record<string, Object>)['content'];
+  return typeof flat === 'string' ? flat as string : '';
+}
+
+/** 事件里的工具调用；同样兼容 data.message 与旧扁平字段。 */
+function callsOf(event: SessionEvent): ToolCall[] {
+  const data = event.data as Record<string, Object> | undefined;
+  if (data !== undefined && data !== null) {
+    const message = data['message'];
+    if (message !== undefined && message !== null) {
+      const calls = (message as Record<string, Object>)['toolCalls'];
+      if (calls !== undefined && calls !== null) {
+        return calls as ToolCall[];
+      }
+    }
+  }
+  const flat = (event as Record<string, Object>)['calls'];
+  return flat === undefined || flat === null ? [] : flat as ToolCall[];
+}
+
 export function readRange(events: SessionEvent[], from: number, to: number): string {
   const parts: string[] = [];
   for (const event of events) {
@@ -65,11 +102,11 @@ export function readRange(events: SessionEvent[], from: number, to: number): str
       continue;
     }
     const calls: string[] = [];
-    for (const call of event.calls) {
+    for (const call of callsOf(event)) {
       calls.push(call.name + (call.argumentsJson.length > 0 ? ' ' + call.argumentsJson : ''));
     }
     const tail = calls.length > 0 ? '\n  calls: ' + calls.join(' | ') : '';
-    parts.push('[seq ' + event.seq + '] ' + event.type + ': ' + clip(event.content) + tail);
+    parts.push('[seq ' + event.seq + '] ' + event.type + ': ' + clip(bodyOf(event)) + tail);
   }
   if (parts.length === 0) {
     return 'seq ' + from + '-' + to + ' 没有记录';
@@ -97,10 +134,10 @@ export function search(events: SessionEvent[], needle: string, limit: number): s
     if (!isMessageType(event)) {
       continue;
     }
-    if (event.content.toLowerCase().indexOf(needle.toLowerCase()) < 0) {
+    if (bodyOf(event).toLowerCase().indexOf(needle.toLowerCase()) < 0) {
       continue;
     }
-    hits.push('[seq ' + event.seq + '] ' + event.type + ': ' + hitWindow(event.content, needle));
+    hits.push('[seq ' + event.seq + '] ' + event.type + ': ' + hitWindow(bodyOf(event), needle));
     if (hits.length >= limit) {
       break;
     }

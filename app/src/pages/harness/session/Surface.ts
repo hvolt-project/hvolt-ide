@@ -6,7 +6,7 @@
 //   sourceEventSeqs 必须覆盖全部被遮蔽节点                                          —— surface.js:259-261
 //   replace 的 startSeq/endSeq 必须引用更早的事件                                    —— surface.js:300-306
 
-import type { SessionEvent, SessionSeq } from './Events';
+import type { SessionEvent, SessionSeq } from './Events.ts';
 
 /** 能进入模型可见 surface 的事件类型，运行时版本。 */
 export const SURFACE_EVENT_TYPES: Set<string> = new Set<string>([

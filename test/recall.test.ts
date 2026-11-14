@@ -6,18 +6,27 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { hitWindow, parseSeq, readRange, recallEvents, search } from '../app/src/pages/harness/loop/Recall.ts';
-import { emptyEvent } from '../app/src/pages/harness/session/Events.ts';
+import { hitWindow, parseSeq, readRange, recallEvents } from '../app/src/pages/harness/loop/Recall.ts';
 import type { SessionEvent } from '../app/src/pages/harness/session/Events.ts';
+import type { ChatMessage, ToolCall } from '../app/src/pages/harness/loop/Types.ts';
 
-function message(seq: number, role: string, content: string, calls: object[] = []): SessionEvent {
-  const type = role === 'assistant' ? 'assistant/message' : role === 'tool' ? 'tool/result' : 'user/message';
-  const event = emptyEvent(type, seq, 0);
-  event.role = role as SessionEvent['role'];
-  event.op = 'append';
-  event.content = content;
-  event.calls = calls as SessionEvent['calls'];
-  return event;
+// 事件现在是 {type, seq, time, data:{message}} 的形状；以前那份扁平字段（role/op/content/calls）
+// 已经不在了，这里按当前结构构造夹具。
+function message(seq: number, role: string, content: string, calls: ToolCall[] = []): SessionEvent {
+  const type = role === 'assistant' ? 'assistant/message'
+    : role === 'tool' ? 'tool/result' : 'user/message';
+  const body: ChatMessage = {
+    id: 0,
+    role: role as ChatMessage['role'],
+    source: role === 'tool' ? 'tool' : (role === 'user' ? 'human' : 'model'),
+    content: content,
+    reasoning: '',
+    context: '',
+    images: [],
+    toolCalls: calls,
+    toolCallId: ''
+  };
+  return { type: type as SessionEvent['type'], seq: seq, time: 0, data: { message: body }, surfaceOp: 'append' } as SessionEvent;
 }
 
 const LOG: SessionEvent[] = [

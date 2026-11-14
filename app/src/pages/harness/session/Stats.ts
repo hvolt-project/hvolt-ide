@@ -4,9 +4,9 @@
 // 与 dsh-session-stats 同一口径：轮数数 turn/start，步数数 step/start，
 // token 取每条 assistant/message 上 provider 报的 usage。
 
-import type { SessionEvent } from './Events';
-import type { Usage } from '../loop/Types';
-import { billedInputTokens, totalTokensOf } from '../loop/Types';
+import type { SessionEvent } from './Events.ts';
+import type { Usage } from '../loop/Types.ts';
+import { billedInputTokens, totalTokensOf } from '../loop/Types.ts';
 
 export interface SessionStats {
   /** 开始了多少轮。 */

@@ -7,7 +7,7 @@
 // 与 DSH 唯一的差别：SessionEventMap 只收本 app 会写的类型，DSH 的 approval/*、team/*、
 // tool-workflow/* 等不在此处。
 
-import type { ChatMessage, Usage } from '../loop/Types';
+import type { ChatMessage, Usage } from '../loop/Types.ts';
 
 /** 单调递增的会话内序号。 */
 export type SessionSeq = number;

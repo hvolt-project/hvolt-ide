@@ -9,15 +9,17 @@
 // 一处必须说清的估算：上下文占用按字符密度计价（estimateContent），因为本 app 没有
 // 引入 DSH 的 conversation meter。这个数字只用于触发压缩，不参与任何对外结论。
 
-import type { ChatMessage, ToolCall, Usage } from '../loop/Types';
-import { emptyStats, foldStats, SessionStats } from './Stats';
-import { assistantMessage, runtimeMessage, systemMessage, toolMessage, userMessage } from '../loop/Types';
-import type { SessionEvent, SessionEventType, SessionSeq, SurfaceOp } from './Events';
-import { SessionLog } from './Log';
-import { applySurface, emptySurface, isAppendSurfaceEvent } from './Surface';
-import type { SurfaceState } from './Surface';
-import { selectCompactableRange } from './Compact';
-import type { CompactOutcome, PricedNode, Region } from './Compact';
+import type { ChatMessage, ToolCall, Usage } from '../loop/Types.ts';
+import { emptyStats, foldStats } from './Stats.ts';
+import type { SessionStats } from './Stats.ts';
+import { assistantMessage, runtimeMessage, systemMessage, toolMessage, userMessage } from '../loop/Types.ts';
+import type { SessionEvent, SessionEventType, SessionSeq, SurfaceOp } from './Events.ts';
+import { SessionLog } from './Log.ts';
+import type { LogStorage } from './Log.ts';
+import { applySurface, emptySurface, isAppendSurfaceEvent } from './Surface.ts';
+import type { SurfaceState } from './Surface.ts';
+import { selectCompactableRange } from './Compact.ts';
+import type { CompactOutcome, PricedNode, Region } from './Compact.ts';
 
 /* 固定密度估算：两个常量与块级算式照 dsh-token-meter/lib/index.js 的
  *  CHARS_PER_TOKEN / BLOCK_OVERHEAD / estimateContent，保证同一段内容两边算出一致的数字。 */
@@ -57,9 +59,9 @@ export class Session {
   private compactionStartSeq: number = -1;
   private compactionId: string = '';
 
-  constructor(id: string = 'local', path: string = '') {
+  constructor(id: string = 'local', path: string = '', storage?: LogStorage) {
     this.id = id;
-    this.log = new SessionLog(path);
+    this.log = new SessionLog(path, storage);
     // 必须取副本：Log.append 会把事件 push 进它自己的 cache，若这里持同一数组，
     // 同一条事件会被记两次，seq 只占偶数，下次载入因序号重复整份拒绝。
     this.events = this.log.events().slice();
