@@ -276,6 +276,9 @@ export class ChatSession {
         const assembled = text.join('');
         const reasoning = thought.join('');
         const requestEnd = Date.now();
+        // tok/s 只算生成区间：从第一个增量到最后一块，不含排队与首个 token 之前的等待。
+        const generateFrom: number = firstDelta > 0 ? firstDelta : requestStart;
+        roundUsage.elapsedMs = requestEnd > generateFrom ? requestEnd - generateFrom : 0;
         hilog.info(0x0000, 'hvoltide',
           'step done: text=%{public}d reasoning=%{public}d tools=%{public}d',
           assembled.length, reasoning.length, calls.length);

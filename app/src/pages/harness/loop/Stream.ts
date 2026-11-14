@@ -88,7 +88,8 @@ export function applyDelta(payload: string, text: string[], calls: Map<number, T
       cacheWriteTokens: cacheWrite,
       completionTokens: numberOr(reported['completion_tokens'], 0),
       reasoningTokens: details === undefined || details === null ? 0 :
-        numberOr(details['reasoning_tokens'], 0)
+        numberOr(details['reasoning_tokens'], 0),
+      elapsedMs: 0
     });
   }
 

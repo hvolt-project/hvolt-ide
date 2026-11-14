@@ -15,6 +15,7 @@ export struct HarnessFace {
   @Prop statTokens: number = 0;
   @Prop statCache: number = -1;
   @Prop statPressure: number = 0;
+  @Prop statContext: number = 0;
   @Prop statRate: number = 0;
   @Prop model: string = '';
   @Prop provider: string = '';
@@ -48,6 +49,7 @@ export struct HarnessFace {
       statTokens: this.statTokens,
       statCache: this.statCache,
       statPressure: this.statPressure,
+      statContext: this.statContext,
       statRate: this.statRate,
       project: this.session.project,
       provider: this.provider,

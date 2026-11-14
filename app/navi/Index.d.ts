@@ -8,3 +8,4 @@ export const streamNext: (handle: number, from: number, max: number, waitMs: num
 export const streamStop: (handle: number) => void;
 export const sandboxProbe: (dir: string, cache: string) => string;
 export const sandboxSh: (line: string, root: string) => string;
+export const jsEval: (source: string, timeoutMs: number, memLimitMb: number) => string;

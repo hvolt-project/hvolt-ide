@@ -19,12 +19,16 @@ export interface SessionStats {
   cacheHit: number;
   /** 上下文占用百分比；0 表示未知或未配置窗口。 */
   pressure: number;
+  /** 最近一次请求的 prompt token 数，也就是当前上下文大小；0 表示还没有读数。 */
+  contextTokens: number;
   /** 最近一步的输出速率（tok/s）；0 表示还没有可算的区间。 */
   rate: number;
 }
 
 export function emptyStats(): SessionStats {
-  return { turns: 0, steps: 0, totalTokens: 0, cacheHit: -1, pressure: 0, rate: 0 };
+  return {
+    turns: 0, steps: 0, totalTokens: 0, cacheHit: -1, pressure: 0, contextTokens: 0, rate: 0
+  };
 }
 
 /** 折叠整个事件流。只认最后一条 usage 决定 pressure，累计量对整段求和。 */
@@ -39,6 +43,9 @@ export function foldStats(events: SessionEvent[], contextWindow: number): Sessio
   let stepStartedAt = -1;
   let lastCompletion = 0;
   let lastRate = 0;
+  // 这一步是否已经有精确的生成区间；没有就用整步墙钟时间兜底（旧日志没有这个字段）。
+  let stepCompletion = 0;
+  let stepHadElapsed = false;
 
   for (const event of events) {
     if (event === undefined || event === null) {
@@ -51,12 +58,13 @@ export function foldStats(events: SessionEvent[], contextWindow: number): Sessio
     if (event.type === 'step/start') {
       steps += 1;
       stepStartedAt = event.time;
+      stepCompletion = 0;
+      stepHadElapsed = false;
       continue;
     }
     if (event.type === 'step/end') {
-      // 速率按一步的墙钟时间算：从 step/start 到 step/end，用这一步输出的 token 数。
-      if (stepStartedAt > 0 && event.time > stepStartedAt && lastCompletion > 0) {
-        lastRate = (lastCompletion * 1000) / (event.time - stepStartedAt);
+      if (!stepHadElapsed && stepStartedAt > 0 && event.time > stepStartedAt && stepCompletion > 0) {
+        lastRate = (stepCompletion * 1000) / (event.time - stepStartedAt);
       }
       stepStartedAt = -1;
       continue;
@@ -80,6 +88,12 @@ export function foldStats(events: SessionEvent[], contextWindow: number): Sessio
     // 最新一次请求的 prompt 才是上下文实际占用，累加值没有意义。
     lastPrompt = billed;
     lastCompletion = usage.completionTokens + usage.reasoningTokens;
+    stepCompletion = lastCompletion;
+    // 速率优先用这一步自己测到的生成区间；没测到就等 step/end 用墙钟时间兜底。
+    if (usage.elapsedMs > 0 && lastCompletion > 0) {
+      lastRate = (lastCompletion * 1000) / usage.elapsedMs;
+      stepHadElapsed = true;
+    }
   }
 
   const stats = emptyStats();
@@ -87,6 +101,7 @@ export function foldStats(events: SessionEvent[], contextWindow: number): Sessio
   stats.rate = lastRate >= 0.05 ? lastRate : 0;
   stats.steps = steps;
   stats.totalTokens = totalTokens;
+  stats.contextTokens = lastPrompt >= 0 ? lastPrompt : 0;
   if (sawUsage && promptTokens > 0) {
     stats.cacheHit = Math.round((cacheRead / promptTokens) * 1000) / 10;
   }

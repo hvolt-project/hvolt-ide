@@ -42,12 +42,14 @@ export interface Usage {
   cacheWriteTokens: number;
   completionTokens: number;
   reasoningTokens: number;
+  /** 生成本身的用时（毫秒）：第一个增量到最后一块。0 表示没测到，不参与 tok/s。 */
+  elapsedMs: number;
 }
 
 export function emptyUsage(): Usage {
   return {
     uncachedInputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0,
-    completionTokens: 0, reasoningTokens: 0
+    completionTokens: 0, reasoningTokens: 0, elapsedMs: 0
   };
 }
 

@@ -15,6 +15,7 @@ import { registerDeployTool } from './tools/Deploy';
 import { registerLogTools } from './tools/Logs';
 import { registerDeviceTools } from './tools/Device';
 import { registerSandboxTools } from './tools/Sandbox';
+import { registerJsEvalTools } from './tools/JsEval';
 import { registerJobTools } from './tools/Jobs';
 import { registerTodoTools } from './tools/Todo';
 import { registerWebTools } from './tools/Web';
@@ -69,6 +70,7 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
   registerLogTools(registry, ctx);
   registerDeviceTools(registry, ctx);
   registerSandboxTools(registry, ctx);
+  registerJsEvalTools(registry);
   registerJobTools(registry, ctx);
   registerTodoTools(registry, ctx);
   registerWebTools(registry, ctx);

@@ -54,6 +54,7 @@ struct Index {
   @State statTokens: number = 0;
   @State statCache: number = -1;
   @State statPressure: number = 0;
+  @State statContext: number = 0;
   @State statRate: number = 0;
   /** 键盘顶起的高度；0 表示键盘收起。 */
   @State keyboardHeight: number = 0;
@@ -385,9 +386,11 @@ struct Index {
     this.statTokens = s.totalTokens;
     this.statCache = s.cacheHit;
     this.statPressure = s.pressure;
+    this.statContext = s.contextTokens;
     this.statRate = s.rate;
-    hilog.info(0x0000, 'hvoltide', 'stats: turns=%{public}d steps=%{public}d tokens=%{public}d cache=%{public}d',
-      s.turns, s.steps, s.totalTokens, s.cacheHit);
+    hilog.info(0x0000, 'hvoltide',
+      'stats: turns=%{public}d steps=%{public}d tokens=%{public}d cache=%{public}d rate=%{public}d ctx=%{public}d',
+      s.turns, s.steps, s.totalTokens, s.cacheHit, s.rate, s.contextTokens);
   }
 
   /** Rebuilds the transcript from session history: a restore, or a project switch. */
@@ -625,6 +628,7 @@ struct Index {
           statTokens: this.statTokens,
           statCache: this.statCache,
           statPressure: this.statPressure,
+          statContext: this.statContext,
           statRate: this.statRate,
           model: this.modelLabel,
           provider: this.providerLabel,

@@ -5,6 +5,7 @@
 #include "napi/native_api.h"
 
 #include "sandbox_sh.h"
+#include "js_eval.h"
 
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -33,6 +34,7 @@ std::string DirOfSelf()
 
 std::string ProbeOnce()
 {
+    if (true) { return std::string("probe-v101"); }
     const std::string dir = DirOfSelf();
     const std::string path = dir + "/libes2abc.so";
     void *h = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
@@ -1188,12 +1190,14 @@ napi_value Init(napi_env env, napi_value exports)
         { "execProbe", nullptr, ExecProbe, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sandboxProbe", nullptr, SandboxProbe, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sandboxSh", nullptr, SandboxSh, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "jsEval", nullptr, JsEval, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamStart", nullptr, StreamStart, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamRead", nullptr, StreamRead, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamStop", nullptr, StreamStop, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamNext", nullptr, StreamNext, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
-    napi_define_properties(env, exports, 10, desc);
+    OH_LOG_INFO(LOG_APP, "navi init v2 exports=11 jsEval=%{public}d", 1);
+    napi_define_properties(env, exports, 11, desc);
     return exports;
 }
 }  // namespace

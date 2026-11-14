@@ -36,6 +36,8 @@ export struct ChatPanel {
   @Prop statTokens: number = 0;
   @Prop statCache: number = -1;
   @Prop statPressure: number = 0;
+  @Prop statContext: number = 0;
+  @Prop statRate: number = 0;
   /** A question a tool is waiting on; '' when nothing is pending. */
   /** Questions a tool is waiting on, and which one is on screen. */
   @Prop askQuestions: AskQuestion[] = [];
@@ -747,7 +749,13 @@ export struct ChatPanel {
     const million = this.statTokens / 1000000;
     const amount = million >= 1 ? million.toFixed(1) + 'M'
       : this.statTokens >= 1000 ? (this.statTokens / 1000).toFixed(1) + 'K' : '' + this.statTokens;
-    const parts: string[] = [amount + ' tok'];
+    const parts: string[] = [];
+    // 上下文占用是当前这一轮的 prompt 大小，与下面的累计计费不是一回事，所以分开写。
+    if (this.statContext > 0) {
+      parts.push('上下文 ' + (this.statContext >= 1000
+        ? (this.statContext / 1000).toFixed(1) + 'K' : '' + this.statContext));
+    }
+    parts.push(amount + ' tok');
     if (this.statCache >= 0) {
       parts.push('缓存 ' + Math.round(this.statCache) + '%');
     }
