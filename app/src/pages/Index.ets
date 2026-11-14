@@ -14,7 +14,8 @@ import { Session } from './model/Session';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
 import { IdeFace } from './view/IdeFace';
-import { ChatPanel, ChatLine } from './view/ChatPanel';
+import { HarnessFace } from './view/HarnessFace';
+import { ChatLine } from './view/ChatPanel';
 import { makeLine } from './view/ChatBlocks';
 import { setChatHandler } from './model/Bridge';
 import { LlmConfig, loadLlmConfig } from './harness/loop/Settings';
@@ -735,77 +736,32 @@ struct Index {
       // The harness face sits over the IDE box, a half revolution away on the same axis.
       // 两面常驻：组件不重建，只改各自角度。
       if (true) {
-        ChatPanel({
+        HarnessFace({
           dark: this.isDark(),
           keyboardInset: this.keyboardHeight,
-          statVisible: this.keyboardHeight <= 0,
           statTurns: this.statTurns,
           statSteps: this.statSteps,
           statTokens: this.statTokens,
           statCache: this.statCache,
           statPressure: this.statPressure,
           statRate: this.statRate,
-          project: this.session.project,
-          provider: this.providerLabel,
           model: this.modelLabel,
-          files: this.session.files,
-          askAnswers: this.session.askAnswers,
-          lines: $chatLines,
-          busy: $chatBusy,
-          // Bound to the session, so a question raised by a tool appears without extra plumbing.
+          provider: this.providerLabel,
           askQuestions: this.askQuestions,
           askIndex: this.askIndex,
-          actions: {
-            send: (text: string, images: string[]) => {
-              this.sendChat(text, images);
-            },
-            stop: () => {
-              this.session.chatStop();
-            },
-            reset: () => {
-              this.session.chatReset();
-              this.chatLines = [];
-            },
-            answerAsk: (selected: string[], custom: string) => {
-              this.session.answerCurrent(selected, custom);
-            },
-            cancelAsk: () => {
-              this.session.cancelAsk();
-            },
-            listSkills: () => {
-              this.session.loadSkill('').then((text: string) => {
-                const lines: ChatLine[] = this.chatLines.slice();
-                for (const line of text.split('\n')) {
-                  lines.push(makeLine('tool', line, 'skill'));
-                }
-                this.chatLines = lines;
-              });
-            },
-            compact: async () => {
-              const outcome = await this.session.chatCompact();
-              // 压缩只改模型看到的历史，对话本身照原样留着；结果作为一行工具记录追加。
-              const note = makeLine('tool', outcome === null
-                ? '无需压缩'
-                : '已压缩 seq ' + outcome.from + '-' + outcome.to + '（约 ' + outcome.tokens +
-                  ' tokens）', 'compact');
-              const lines: ChatLine[] = this.chatLines.slice();
-              lines.push(note);
-              this.chatLines = lines;
-            },
-            close: () => {
-              // 收回与呼出走同一条翻面：只置 chatOpen 会让角度停在 180，界面看着没动。
-              this.flipTo(false);
-            }
+          flipAngle: this.flipAngle,
+          flipBusy: this.flipBusy,
+          lines: $chatLines,
+          busy: $chatBusy,
+          session: this.session,
+          onSend: (text: string, images: string[]) => {
+            this.sendChat(text, images);
+          },
+          onClose: () => {
+            // 收回与呼出走同一条翻面：只置 chatOpen 会让角度停在 180，界面看着没动。
+            this.flipTo(false);
           }
         })
-          .shadow({ radius: 22, color: '#00000099', offsetX: 0, offsetY: 0 })
-          // 翻面：harness 面始终比 IDE 面多 180°，两面夹角恒定，跟手时不会出现角度跳变。
-          .rotate({ y: 1, angle: this.flipAngle + 180, perspective: 800 })
-          // 与 IDE 面同一条规则：只有朝前的一面可见。harness 面在 180° 一侧，所以它露面
-          // 的区间与 IDE 面相反。
-          .visibility(Math.abs(this.flipAngle) > TURN_VISIBLE ? Visibility.Visible : Visibility.Hidden)
-          // 同一条规则：只在翻转期间合并绘制。
-          .renderGroup(this.flipBusy)
       }
     }
     .width('100%')
