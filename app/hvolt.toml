@@ -1,7 +1,7 @@
 [app]
 bundle = "xyz.sudofree.hvolt.ide"
 name = "hvolt IDE"
-version = "1.2.0"
+version = "1.2.1"
 vendor = "sudofree"
 icon = "$media:layered_image"
 sdk_version = "26.0.0"

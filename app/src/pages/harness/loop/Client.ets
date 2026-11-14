@@ -19,6 +19,8 @@ export interface StreamSink {
   onToolCall: (call: ToolCall) => void;
   /** Token usage for this request, when the endpoint reports it. */
   onUsage?: (usage: Usage) => void;
+  /** finish_reason for this request: `length` means the budget ran out before any content. */
+  onFinish?: (reason: string) => void;
   onDone: () => void;
   onError: (message: string) => void;
 }

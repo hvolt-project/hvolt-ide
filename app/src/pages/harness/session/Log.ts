@@ -193,7 +193,7 @@ export class SessionLog {
     if (sourceEventSeqs !== undefined) {
       base['sourceEventSeqs'] = sourceEventSeqs;
     }
-    const event = base as SessionEvent;
+    const event = base as unknown as SessionEvent;
     this.write(event);
     return event;
   }

@@ -75,7 +75,7 @@ function bodyOf(event: SessionEvent): string {
       }
     }
   }
-  const flat = (event as Record<string, Object>)['content'];
+  const flat = (event as unknown as Record<string, Object>)['content'];
   return typeof flat === 'string' ? flat as string : '';
 }
 
@@ -91,7 +91,7 @@ function callsOf(event: SessionEvent): ToolCall[] {
       }
     }
   }
-  const flat = (event as Record<string, Object>)['calls'];
+  const flat = (event as unknown as Record<string, Object>)['calls'];
   return flat === undefined || flat === null ? [] : flat as ToolCall[];
 }
 

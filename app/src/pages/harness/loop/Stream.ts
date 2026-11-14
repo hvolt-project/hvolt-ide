@@ -17,6 +17,8 @@ export interface DeltaSink {
   onText?: (piece: string) => void;
   onThought?: (piece: string) => void;
   onUsage?: (usage: Usage) => void;
+  /** finish_reason：`length` 表示预算先于内容耗尽，和「模型什么都没说」不是一回事。 */
+  onFinish?: (reason: string) => void;
 }
 
 /** Splits a buffer into whole SSE lines, returning the lines and the remainder to carry over.

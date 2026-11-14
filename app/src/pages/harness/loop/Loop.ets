@@ -245,6 +245,7 @@ export class ChatSession {
         const requestStart = Date.now();
         let firstDelta = 0;
         let roundUsage: Usage = emptyUsage();
+        let finishReason = '';
         await this.transport(config, this.attachShots(pairToolResults(this.session.messages())), {
           onText: (delta: string) => {
             if (firstDelta === 0) {
@@ -266,6 +267,9 @@ export class ChatSession {
           onUsage: (usage: Usage) => {
             roundUsage = usage;
           },
+          onFinish: (reason: string) => {
+            finishReason = reason;
+          },
           onDone: () => {
           },
           onError: (message: string) => {
@@ -280,8 +284,12 @@ export class ChatSession {
         const generateFrom: number = firstDelta > 0 ? firstDelta : requestStart;
         roundUsage.elapsedMs = requestEnd > generateFrom ? requestEnd - generateFrom : 0;
         hilog.info(0x0000, 'hvoltide',
-          'step done: text=%{public}d reasoning=%{public}d tools=%{public}d',
-          assembled.length, reasoning.length, calls.length);
+          'step done: text=%{public}d reasoning=%{public}d tools=%{public}d finish=%{public}s',
+          assembled.length, reasoning.length, calls.length, finishReason);
+        // 被长度上限截断时，回复看起来和「模型没说话」一样；把原因记进日志才有据可查。
+        if (finishReason === 'length') {
+          hilog.warn(0x0000, 'hvoltide', 'step ended on the length limit (budget ran out)');
+        }
 
         if (failure.length > 0) {
           this.session.append('assistant/attempt', { turn: this.turn, step: this.step, stream: streamOf('text-chunks', assembled + reasoning, requestEnd) });

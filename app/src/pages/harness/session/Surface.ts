@@ -27,17 +27,17 @@ export function isSurfaceEvent(event: SessionEvent): boolean {
   if (!SURFACE_EVENT_TYPES.has(event.type)) {
     return false;
   }
-  return (event as SessionEvent<'user/message'>).surfaceOp !== undefined;
+  return (event as SessionEvent).surfaceOp !== undefined;
 }
 
 /** 在自己日志位置上追加进 surface（而非作为替换副本）的事件。 */
 export function isAppendSurfaceEvent(event: SessionEvent): boolean {
-  return isSurfaceEvent(event) && (event as SessionEvent<'user/message'>).surfaceOp === 'append';
+  return isSurfaceEvent(event) && (event as SessionEvent).surfaceOp === 'append';
 }
 
 /** 遮蔽了一段已存在 surface 节点的替换事件。 */
 export function isReplacementSurfaceEvent(event: SessionEvent): boolean {
-  return isSurfaceEvent(event) && (event as SessionEvent<'user/message'>).surfaceOp !== 'append';
+  return isSurfaceEvent(event) && (event as SessionEvent).surfaceOp !== 'append';
 }
 
 /**
@@ -100,7 +100,7 @@ export function applySurface(state: SurfaceState, event: SessionEvent): SurfaceS
   if (!isSurfaceEvent(event)) {
     return state;
   }
-  const intent = event as SessionEvent<'user/message'>;
+  const intent = event as SessionEvent;
   const op = intent.surfaceOp;
   if (op === 'append') {
     const nodes = state.nodes.concat([event.seq]);
@@ -111,6 +111,11 @@ export function applySurface(state: SurfaceState, event: SessionEvent): SurfaceS
       projectedMessages: state.projectedMessages,
       projections: state.projections
     };
+  }
+  // isSurfaceEvent 保证 surfaceOp 不是 undefined，但它不是类型谓词，这里把窄化写实；
+  // 顺带挡住手写日志里 surfaceOp 被写成别的值的情况。
+  if (typeof op !== 'object' || op === null) {
+    throw new Error(`surface event at seq ${event.seq}: surfaceOp must be 'append' or a range`);
   }
   if (op.startSeq >= event.seq || op.endSeq >= event.seq) {
     throw new Error(`surface replace at seq ${event.seq}: startSeq and endSeq must reference earlier events`);
