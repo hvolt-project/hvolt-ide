@@ -11,6 +11,7 @@ import { GAP, palette, Palette } from './model/Palette';
 import { DURATION, spring, TURN, TURN_DECIDE, TURN_VISIBLE, TURN_OVERSHOOT, TURN_SHOOT_MS, TURN_SETTLE_MS, TURN_FINGERS_MIN, TURN_FINGERS_MAX } from './model/Motion';
 import { Bp } from './model/Bridge';
 import { Session } from './model/Session';
+import { publishSession } from './model/Storage';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
 import { IdeFace } from './view/IdeFace';
@@ -109,43 +110,21 @@ struct Index {
   }
 
   // The single publication point: every pane reads these keys, so a new value reaches
-  // the status bar, the sheet and the menu without new plumbing.
+  // the status bar, the sheet and the menu without new plumbing. The key list itself
+  // lives in model/Storage so this file does not own it.
   private publish(): void {
-    const s = this.session;
-    AppStorage.setOrCreate('ide.files', s.files);
-    AppStorage.setOrCreate('ide.tabs', s.openTabs);
-    AppStorage.setOrCreate('ide.dirty', s.dirtyTabs);
-    AppStorage.setOrCreate('ide.current', s.current);
-    AppStorage.setOrCreate('ide.pos', s.curLine + ',' + s.curCol);
-    AppStorage.setOrCreate('ide.chromeHidden', s.chromeHidden);
-    AppStorage.setOrCreate('ide.projects', s.projects);
-    AppStorage.setOrCreate('ide.project', s.project);
-    AppStorage.setOrCreate('ide.device', s.device);
-    this.devList = s.devices;
-    AppStorage.setOrCreate('ide.status', s.statusText);
-    AppStorage.setOrCreate('ide.tone', s.statusTone);
-    AppStorage.setOrCreate('ide.log', s.log);
-    AppStorage.setOrCreate('ide.hlog', s.hlog);
-    AppStorage.setOrCreate('ide.link', s.linkState);
-    this.link = s.link;
-    this.linkText = s.linkState;
-    this.statusLine = s.statusText;
-    this.logText = s.log;
-    this.hlogText = s.hlog;
-    this.devTarget = s.device;
-    this.agcText = s.agc.state;
-    this.agcUser = s.agc.user;
-    this.agcAuthUrl = s.agc.url;
-    this.statusToneValue = s.statusTone;
-    AppStorage.setOrCreate('ide.outline', s.outline);
-    AppStorage.setOrCreate('ide.outlineNote', s.outlineNote);
-    AppStorage.setOrCreate('ide.agc', s.agc.state);
-    AppStorage.setOrCreate('ide.busy', s.busy);
-    AppStorage.setOrCreate('ide.projectInfo',
-      s.project + ' · ' + s.sourceCount + ' 个源文件\n' + s.projectPath());
-    AppStorage.setOrCreate('ide.signingInfo',
-      (s.signingReady ? '调试签名材料已就位' : '未找到签名材料') + '\n' + s.agc.state);
-    AppStorage.setOrCreate('ide.aboutInfo', s.version);
+    const m = publishSession(this.session);
+    this.devList = m.devices;
+    this.link = m.link;
+    this.linkText = m.linkText;
+    this.statusLine = m.statusText;
+    this.logText = m.log;
+    this.hlogText = m.hlog;
+    this.devTarget = m.device;
+    this.agcText = m.agcState;
+    this.agcUser = m.agcUser;
+    this.agcAuthUrl = m.agcUrl;
+    this.statusToneValue = m.statusTone;
   }
 
   aboutToAppear(): void {
