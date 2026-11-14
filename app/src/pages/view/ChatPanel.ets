@@ -95,12 +95,17 @@ export struct ChatPanel {
     if (last !== null && last.kind === 'user') {
       this.stickBottom = true;
     }
-    if (!this.stickBottom) {
+    // 手指正在拖动就不再吸底：否则新到的 token 会把读者刚翻上去的位置拽回底部。
+    if (!this.stickBottom || this.userScrolling) {
       return;
     }
     // After the frame that added the row: scrolling before layout has grown the list reaches the
     // old bottom and stops short of the new last line.
     setTimeout(() => {
+      // 定时器触发的这一刻读者可能已经开始上翻，按排程时的判断执行会把他拽回底部。
+      if (!this.stickBottom || this.userScrolling) {
+        return;
+      }
       try {
         this.programmatic = true;
         this.scroller.scrollEdge(Edge.Bottom);
@@ -801,7 +806,13 @@ export struct ChatPanel {
         // 跟随状态只由手指的滚动决定。程序自己滚到底也会触发 onScrollStop，
         // 若在这里无脑按 isAtEnd() 写回，读者上翻一次就会被下一条 token 拽回底部。
         .onScrollStart(() => {
+          // 程序自己滚到底也会走到这里，那不是读者的意图，不能因此关掉跟随。
+          if (this.programmatic) {
+            return;
+          }
+          // 起手即停止吸底：拖动过程中新内容还在到达，等到抬手才判断已经把人拽住了。
           this.userScrolling = true;
+          this.stickBottom = false;
         })
         .onScrollStop(() => {
           if (this.programmatic) {
