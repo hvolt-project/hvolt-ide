@@ -80,3 +80,18 @@ export function unpairedCalls(messages: ChatMessage[]): string[] {
   }
   return bad;
 }
+
+/** 一次请求的线上消息，以及配对之后仍违约的调用（正常应为空）。 */
+export interface OutboundRequest {
+  messages: ChatMessage[];
+  broken: string[];
+}
+
+/**
+ * 发送边界上的唯一入口：先配对，再检查。放在这里而不是循环里，
+ * 是为了让「请求长什么样」这件事能在 Node 上被测试，而不只在设备上表现。
+ */
+export function prepareRequest(messages: ChatMessage[]): OutboundRequest {
+  const paired = pairToolResults(messages);
+  return { messages: paired, broken: unpairedCalls(paired) };
+}

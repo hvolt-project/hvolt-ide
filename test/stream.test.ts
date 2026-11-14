@@ -9,7 +9,7 @@ import assert from 'node:assert/strict';
 import { totalTokensOf } from '../app/src/pages/harness/loop/Types.ts';
 
 import { applyDelta, collectCalls, cutLines, ssePayload } from '../app/src/pages/harness/loop/Stream.ts';
-import { pairToolResults, unpairedCalls } from '../app/src/pages/harness/loop/Wire.ts';
+import { pairToolResults, prepareRequest, unpairedCalls } from '../app/src/pages/harness/loop/Wire.ts';
 import type { ToolCallChunk } from '../app/src/pages/harness/loop/Stream.ts';
 import type { ChatMessage } from '../app/src/pages/harness/loop/Types.ts';
 
@@ -172,4 +172,19 @@ test('a call with no result gets a placeholder that keeps the protocol valid', (
   assert.equal(fixed[1].role, 'tool');
   assert.equal(fixed[1].toolCallId, 'c9');
   assert.deepEqual(unpairedCalls(fixed), []);
+});
+
+test('prepareRequest returns valid messages and no violations for a broken log', () => {
+  const messages = [
+    { id: 0, role: 'assistant', source: 'model', content: '', reasoning: '', context: '', images: [],
+      toolCalls: [{ id: 'c1', name: 'read', argumentsJson: '{}' }], toolCallId: '' },
+    { id: 1, role: 'user', source: 'human', content: '插进来的消息', reasoning: '', context: '', images: [],
+      toolCalls: [], toolCallId: '' },
+    { id: 2, role: 'tool', source: 'tool', content: 'body', reasoning: '', context: '', images: [],
+      toolCalls: [], toolCallId: 'c1' }
+  ] as ChatMessage[];
+  const outbound = prepareRequest(messages);
+  assert.deepEqual(outbound.broken, []);
+  assert.equal(outbound.messages[1].toolCallId, 'c1', 'the result moved up');
+  assert.equal(outbound.messages.length, messages.length);
 });
