@@ -8,10 +8,11 @@ import web_webview from '@ohos.web.webview';
 
 import { AskQuestion } from './model/Ask';
 import { GAP, palette, Palette } from './model/Palette';
-import { DURATION, spring, TURN, TURN_DECIDE, TURN_VISIBLE, TURN_OVERSHOOT, TURN_SHOOT_MS, TURN_SETTLE_MS, TURN_FINGERS_MIN, TURN_FINGERS_MAX } from './model/Motion';
+import { DURATION, spring, TURN, TURN_VISIBLE, TURN_OVERSHOOT, TURN_SHOOT_MS, TURN_SETTLE_MS, TURN_FINGERS_MIN } from './model/Motion';
 import { Bp } from './model/Bridge';
 import { Session } from './model/Session';
 import { publishSession } from './model/Storage';
+import { directedTarget, dragAngle, flipsArmable, releaseTarget } from './model/Flip';
 import { readPref, writePref } from './model/Prefs';
 import { LayoutWatcher } from './model/Layout';
 import { IdeFace } from './view/IdeFace';
@@ -245,16 +246,11 @@ struct Index {
   }
 
   // 编辑器那一路：WebView 收走触摸，页面松手才上报一次滑向，所以按滑向整段翻。
-  // 已经在 harness 面时任意滑向都退回 IDE 面，不区分左右。
   private flipToDir(dir: number): void {
     if (this.flipBusy) {
       return;
     }
-    if (Math.abs(this.flipAngle) > 1) {
-      this.turnTo(0);
-      return;
-    }
-    this.turnTo(dir < 0 ? -TURN : TURN);
+    this.turnTo(directedTarget(this.flipAngle, dir));
   }
 
   // 一段完整翻转，两段串联：先快速冲到落点外侧 TURN_OVERSHOOT 度，再从那里沿一条长尾
@@ -290,7 +286,7 @@ struct Index {
       return;
     }
     const n: number = e.fingerList ? e.fingerList.length : 0;
-    if (n < TURN_FINGERS_MIN || n > TURN_FINGERS_MAX) {
+    if (!flipsArmable(n)) {
       return;
     }
     this.flipArmed = true;
@@ -303,48 +299,19 @@ struct Index {
       return;
     }
     const n: number = e.fingerList ? e.fingerList.length : 0;
-    if (n < TURN_FINGERS_MIN || n > TURN_FINGERS_MAX) {
+    if (!flipsArmable(n)) {
       return;
     }
-    const w: number = this.screenW > 0 ? this.screenW : 360;
-    const travel: number = (Math.abs(e.offsetX) / w) * TURN;
-    let next: number = this.flipBase;
-    if (Math.abs(this.flipBase) <= 1) {
-      // 从 IDE 面进入：方向由手指决定，左滑取负、右滑取正。
-      next = e.offsetX < 0 ? -travel : travel;
-    } else {
-      // 从 harness 面退出：任意滑向都朝 0 走，省掉「这个方向没反应」的困惑。
-      next = this.flipBase + (this.flipBase > 0 ? -travel : travel);
-    }
-    if (next > TURN) {
-      next = TURN;
-    }
-    if (next < -TURN) {
-      next = -TURN;
-    }
-    this.flipAngle = next;
+    this.flipAngle = dragAngle(this.flipBase, e.offsetX, this.screenW);
   }
 
-  // 松手：这次手指走过的路程过阈值就换面，不到就回弹。两个方向都按「走了多少」判，
-  // 不按「离 0 还有多远」——后者会让退出要多走 180°−阈值，也就是进出的手感差三倍。
+  // 松手：走够阈值就换面，不够就回弹。判定规则在 model/Flip。
   private flipEnd(): void {
     if (!this.flipArmed) {
       return;
     }
     this.flipArmed = false;
-    const a: number = this.flipAngle;
-    const moved: number = Math.abs(a - this.flipBase);
-    let target: number = this.flipBase;
-    if (moved >= TURN_DECIDE) {
-      if (Math.abs(this.flipBase) <= 1) {
-        // IDE 面：朝手指方向翻过去，符号由滑向定。
-        target = a < 0 ? -TURN : TURN;
-      } else {
-        // harness 面：任意滑向都退回。
-        target = 0;
-      }
-    }
-    this.turnTo(target);
+    this.turnTo(releaseTarget(this.flipBase, this.flipAngle));
   }
 
   private frame(): string | number {
