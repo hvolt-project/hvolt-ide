@@ -4,7 +4,6 @@ import hilog from '@ohos.hilog';
 // subscribe to them, so this file never threads data through intermediate props.
 import { common } from '@kit.AbilityKit';
 import { display, window } from '@kit.ArkUI';
-import web_webview from '@ohos.web.webview';
 
 import { AskQuestion } from './model/Ask';
 import { GAP, palette, Palette } from './model/Palette';
@@ -21,7 +20,7 @@ import { HarnessFace } from './view/HarnessFace';
 import { ChatLine } from './view/ChatPanel';
 import { setChatHandler } from './model/Bridge';
 import { LlmConfig, loadLlmConfig } from './harness/loop/Settings';
-import { SettingsSheet } from './view/SettingsSheet';
+import { Overlays } from './view/Overlays';
 import { providerOf } from './harness/loop/Urls';
 
 @Entry
@@ -80,7 +79,6 @@ struct Index {
   @State agcText: string = '';
   @State agcUser: string = '';
   @State agcAuthUrl: string = '';
-  authController: web_webview.WebviewController = new web_webview.WebviewController();
   // A failed step is the one case where the log has to come forward by itself: the reason
   // lives in the toolchain output, not in the status line.
   @State @Watch('onTone') statusToneValue: number = 0;
@@ -538,20 +536,23 @@ struct Index {
         }
       })
 
-      if (this.showSettings) {
-        SettingsSheet({
+      // 空着的时候不挂这层：它铺满整屏，常驻会挡住下面的编辑器。
+      if (this.showSettings || this.agcAuthUrl.length > 0) {
+        Overlays({
           dark: this.isDark(),
-          project: AppStorage.get<string>('ide.project') ?? '',
+          showSettings: this.showSettings,
           device: this.devTarget,
-          linkState: AppStorage.get<string>('ide.link') ?? '',
           agcState: this.agcText,
           agcUser: this.agcUser,
-          aboutInfo: AppStorage.get<string>('ide.aboutInfo') ?? '',
-          busy: this.session.busy,
+          agcAuthUrl: this.agcAuthUrl,
+          devices: this.devList,
+          link: this.link,
+          leftOpen: $leftOpen,
+          session: this.session,
           onOptions: () => {
             this.session.applyOptions();
           },
-          onClose: () => {
+          onCloseSettings: () => {
             animateTo({ duration: DURATION, curve: spring() }, () => {
               this.showSettings = false;
             });
@@ -565,8 +566,6 @@ struct Index {
           onDevice: (value: string) => {
             this.session.saveDevice(value);
           },
-          devices: this.devList,
-          link: this.link,
           onAgcLogin: () => {
             this.session.agc.start();
           },
@@ -575,41 +574,13 @@ struct Index {
           },
           onDevices: (list: string[]) => {
             this.session.saveDevices(list);
+          },
+          onAgcCancel: () => {
+            this.session.agc.url = '';
+            this.agcAuthUrl = '';
           }
         })
       }
-
-        if (this.agcAuthUrl.length > 0) {
-          // The authorization page runs inside the app: the redirect it makes to loopback
-          // carries the tempToken, and intercepting it here keeps the whole exchange in
-          // the sandbox instead of relying on an external browser.
-          Column() {
-            Row({ space: 8 }) {
-              Text('AppGallery Connect 登录')
-                .fontSize(15)
-                .fontColor(this.p().textPrimary)
-                .layoutWeight(1)
-              Text('取消')
-                .fontSize(14)
-                .fontColor(this.p().brand)
-                .onClick(() => {
-                  this.session.agc.url = '';
-                  this.agcAuthUrl = '';
-                })
-            }
-            .width('100%')
-            .height(48)
-            .padding({ left: 16, right: 16 })
-
-            Web({ src: this.agcAuthUrl, controller: this.authController })
-              .width('100%')
-              .layoutWeight(1)
-              .javaScriptAccess(true)
-          }
-          .width('100%')
-          .height('100%')
-          .backgroundColor(this.p().bg)
-        }
 
       }
       .width('100%')
