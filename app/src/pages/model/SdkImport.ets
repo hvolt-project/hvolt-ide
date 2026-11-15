@@ -114,6 +114,17 @@ function freshDir(path: string): void {
   fs.mkdirSync(path, true);
 }
 
+/** This runtime has `readTextSync` but no `writeFileSync` (measured on device:
+ *  "writeFileSync is not callable"), so whole-file writes go through an fd, as elsewhere. */
+function writeText(path: string, text: string): void {
+  const file = fs.openSync(path, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
+  try {
+    fs.writeSync(file.fd, text);
+  } finally {
+    fs.closeSync(file);
+  }
+}
+
 function copyFile(from: string, to: string): void {
   const input = fs.openSync(from, fs.OpenMode.READ_ONLY);
   const output = fs.openSync(to, fs.OpenMode.READ_WRITE | fs.OpenMode.CREATE | fs.OpenMode.TRUNC);
@@ -223,11 +234,22 @@ export async function importSdk(): Promise<SdkImportResult> {
     replaceDir(STAGE_DIR, SDK_DIR);
     // The stamp is what the first-launch unpacker compares; writing an import marker stops it from
     // re-unpacking the bundled archive over the imported tree on the next start.
-    fs.writeFileSync(stamp, 'imported:' + label);
-    if (!exists(ARCHIVE_DIR)) {
-      fs.mkdirSync(ARCHIVE_DIR, true);
+    try {
+      writeText(stamp, 'imported:' + label);
+    } catch (e) {
+      // A missing stamp only means the next start may unpack the bundled archive again; the
+      // imported tree is already in place, so this must not fail the import.
     }
-    copyFile(staging, ARCHIVE_DIR + '/' + label + '.zip');
+    // The copy of the source archive is a convenience for rolling back, not a condition: it once
+    // reported a successful swap as `替换失败` (139000002 on the archive path).
+    try {
+      if (!exists(ARCHIVE_DIR)) {
+        fs.mkdirSync(ARCHIVE_DIR, true);
+      }
+      copyFile(staging, ARCHIVE_DIR + '/' + label + '.zip');
+    } catch (e) {
+      // Keep going: the SDK tree itself has been swapped in above.
+    }
   } catch (e) {
     return { ok: false, message: '替换失败：' + errText(e), version: version };
   } finally {
