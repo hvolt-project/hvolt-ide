@@ -6,6 +6,10 @@ import { FILES } from '../../model/Stage';
 import { ToolRegistry } from '../mcp/Registry';
 import { FileContext, requireProject } from './Files';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['build'];
+
+
 export interface ToolRun {
   code: number;
   output: string;

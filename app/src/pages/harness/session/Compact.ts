@@ -84,3 +84,11 @@ export function regionTokens(pricedNodes: PricedNode[], region: Region): number 
   }
   return sum;
 }
+/** 没有压成的原因。界面按原因分别显示，不再一律说「无需压缩」。 */
+export type CompactStop = 'busy' | 'no-region' | 'empty-summary' | 'not-smaller';
+
+/** 一次压缩尝试的结果：压成了给 outcome，没压成给原因。 */
+export interface CompactAttempt {
+  outcome: CompactOutcome | null;
+  stop: CompactStop | null;
+}

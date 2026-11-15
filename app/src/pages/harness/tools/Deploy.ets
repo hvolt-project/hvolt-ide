@@ -7,6 +7,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { FileContext, requireProject } from './Files';
 import { ToolRun, runHvolt } from './Build';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['reinstall_self', 'sign_deploy'];
+
+
 function lastLines(text: string, lines: number): string {
   const all: string[] = text.split('\n');
   const start = all.length > lines ? all.length - lines : 0;

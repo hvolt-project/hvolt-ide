@@ -8,6 +8,10 @@
 import util from '@ohos.util';
 import { ToolRegistry } from '../mcp/Registry';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['sdk_search', 'sdk_read'];
+
+
 // 实际布局是 rawfile/sdk/sdk/：外层 sdk/ 是打包入口，里层才是 SDK 视图本身（api/ 与
 // index.tsv 都在里面）。少写一层时两个工具都读不到文件，表现为「sdk_search 坏了」。
 const INDEX_FILE: string = 'sdk/sdk/index.tsv';

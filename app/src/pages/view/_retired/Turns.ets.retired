@@ -1,0 +1,95 @@
+// 对话的呈现结构：Turn → Block。
+//
+// 与 dsh-client-ui-chat 的组装方式对齐：
+//   · AssistantMarkdown 按 blocks 顺序渲染，reasoning 块内联成 ReasoningRow，
+//     tool-call 块不在这里渲染（client.js:6262-6330）；
+//   · 工具调用由 ChatGroupSeat 独立承载，是 turn 里的过程组（client.js:4144）。
+//
+// 所以这里只做聚合：把扁平的 ChatLine 归到 turn，再把 turn 内相邻同类行合成 block。
+// 折或不折、开还是合，全部留给渲染层按档位决定——数据结构里不掺显示决定。
+
+import type { ChatLine } from './ChatBlocks';
+
+export type BlockKind = 'user' | 'text' | 'reasoning' | 'tools' | 'error' | 'injection';
+
+export interface Block {
+  kind: BlockKind;
+  /** 组成这一块的行，按原顺序。 */
+  lines: ChatLine[];
+}
+
+export interface Turn {
+  /** 稳定的 turn 键：取起始下标与首行。 */
+  key: string;
+  /** 按原顺序排列的块。 */
+  blocks: Block[];
+  /** 这一轮是否已经结束（运行中的轮不折叠）。 */
+  closed: boolean;
+  /** turn 内是否有工具调用：决定要不要出过程组。 */
+  hasTools: boolean;
+  /** 工具行本身，供过程组使用（按原顺序）。 */
+  tools: ChatLine[];
+}
+
+function blockKindOf(kind: string): BlockKind {
+  if (kind === 'thought') {
+    return 'reasoning';
+  }
+  if (kind === 'tool') {
+    return 'tools';
+  }
+  if (kind === 'error') {
+    return 'error';
+  }
+  if (kind === 'user') {
+    return 'user';
+  }
+  if (kind === 'injection' || kind === 'checkpoint') {
+    return 'injection';
+  }
+  return 'text';
+}
+
+/**
+ * 把扁平的行归成 turn。
+ *
+ * @param lines 全量行
+ * @param runningTurnStart 正在跑的 turn 的起始下标（-1 表示都不在跑）
+ */
+export function turnsOf(lines: ChatLine[], runningTurnStart: number): Turn[] {
+  const out: Turn[] = [];
+  let index = 0;
+  while (index < lines.length) {
+    const start = index;
+    let end = start + 1;
+    while (end < lines.length && lines[end].kind !== 'user') {
+      end += 1;
+    }
+    const turnLines = lines.slice(start, end);
+    const blocks: Block[] = [];
+    const tools: ChatLine[] = [];
+    let current: Block | undefined = undefined;
+    for (const line of turnLines) {
+      const kind = blockKindOf(line.kind);
+      if (kind === 'tools') {
+        tools.push(line);
+      }
+      if (current !== undefined && current.kind === kind) {
+        current.lines.push(line);
+        continue;
+      }
+      const block: Block = { kind: kind, lines: [line] };
+      blocks.push(block);
+      current = block;
+    }
+    out.push({
+      key: 't:' + String(start) + ':' + (turnLines.length > 0 ? turnLines[0].kind : ''),
+      blocks: blocks,
+      closed: start !== runningTurnStart,
+      hasTools: tools.length > 0,
+      tools: tools
+    });
+    index = end;
+  }
+  return out;
+}

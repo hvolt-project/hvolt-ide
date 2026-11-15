@@ -13,15 +13,28 @@ import { runBatch } from './ToolBatch';
 import { prepareRequest } from './Wire';
 import { dispatch } from './Dispatch';
 import { LlmConfig } from './Settings';
+import { fetchContextWindow } from './Models';
 import { ChatMessage, ToolCall, Usage, assistantMessage, emptyUsage, runtimeMessage, systemMessage, userMessage } from './Types';
 import { Session, priceOfMessage } from '../session/Session';
 import { SessionStats } from '../session/Stats';
 import { selectCompactableRange } from '../session/Compact';
+import type { CompactAttempt } from '../session/Compact';
+import { compileCheckpoint } from '../session/Vcc';
+import type { Checkpoint } from '../session/Vcc';
 import type { CompactOutcome, PricedNode, Region } from '../session/Compact';
 import { recallEvents } from './Recall';
+import { APPROVAL } from '../Approval';
+import { snapshotAnnotate, snapshotCommit } from 'libnavi.so';
 
 export type Transport = (config: LlmConfig, messages: ChatMessage[], sink: StreamSink,
   abort: AbortFlag) => Promise<void>;
+
+
+/** 触发线：窗口的 50%（dsh-compaction-instant 的 thresholdRatio）。 */
+const COMPACT_THRESHOLD_RATIO: number = 0.5;
+
+/** 尾部原样保留：窗口的 5%（instant 的 retainRatio）。 */
+const COMPACT_RETAIN_RATIO: number = 0.05;
 
 export interface LoopSink {
   onText: (delta: string) => void;
@@ -32,22 +45,6 @@ export interface LoopSink {
   onDone: () => void;
 }
 
-/** 压缩摘要的固定指令。 */
-const COMPACTION_INSTRUCTION: string =
-  'Summarize the conversation above so it can replace the original in context.\n\n' +
-  'Write a dense brief the next turn can act on without re-reading anything. Use short sections, ' +
-  'not prose paragraphs. Write "(none)" for an empty section — never drop a section.\n\n' +
-  '## Primary Request and Intent\n' +
-  '## Key Technical Concepts\n' +
-  '## Files and Code\n' +
-  '## Errors and Fixes\n' +
-  '## Pending Jobs\n' +
-  '## Current Work\n' +
-  '## Next Step\n' +
-  '## Critical Context\n\n' +
-  'Rules: preserve exact paths, commands, error strings, identifiers and numbers. Capture user ' +
-  'corrections faithfully. Do not mention this request or that the context was compacted. Output ' +
-  'only the checkpoint text: do not call any tool or take any other action.';
 
 /** 技能目录的标记：目录拼在系统提示里，读回时靠它拆开。 */
 const CATALOG_TAG: string = '<!-- skill-catalog -->';
@@ -55,10 +52,21 @@ const CATALOG_TAG: string = '<!-- skill-catalog -->';
 export class ChatSession {
   private session: Session = new Session('chat', '');
 
+  /**
+   * 启动时先把窗口问出来。
+   *
+   * 状态栏的占用百分比要一个分母；把它推后到第一条消息，等于进程刚起来那段时间整段不显示
+   * （`statPressure` 为 0 时那一块根本不渲染）。
+   */
+  async warmContextWindow(config: LlmConfig): Promise<void> {
+    await this.applyContextWindow(config);
+  }
+
   /** 状态栏用的统计：转给内层会话折叠。 */
   stats(): SessionStats {
     return this.session.stats();
   }
+
   private abort: AbortFlag = new AbortFlag();
   private running: boolean = false;
   private requestHeaderLogged: boolean = false;
@@ -71,6 +79,15 @@ export class ChatSession {
   private transport: Transport = streamChat;
   /** 这一轮拍下的截图（data URL），下一次请求前附到消息里。 */
   private pendingShots: string[] = [];
+  /** 当前项目根，由会话层给出；空串表示没有打开项目，此步不落快照。 */
+  private projectRootOf: () => string = () => '';
+  /** 上一次落盘还没回来时不再排新的：每步都排会在工作线程里堆任务。 */
+  private snapshotBusy: boolean = false;
+  /** 本步用到的工具名与改动文件数，等这一步结束再补进快照的 message。 */
+  private stepTool: string = '';
+  private stepFiles: number = 0;
+  /** 本步是否落了快照；没落就没有可补的 commit。 */
+  private stepSnapshot: boolean = false;
 
   // --- 生命周期 --------------------------------------------------------------------------------
 
@@ -154,6 +171,11 @@ export class ChatSession {
     this.applySystem();
   }
 
+  /** 会话层每次发送前把当前项目根交进来，快照才知道该记哪个工作树。 */
+  setProjectRoot(read: () => string): void {
+    this.projectRootOf = read;
+  }
+
   private applySystem(): void {
     const full = this.catalogBody.length === 0
       ? this.systemText : this.systemText + '\n\n' + this.catalogBody;
@@ -191,6 +213,29 @@ export class ChatSession {
 
   // --- 一轮 ------------------------------------------------------------------------------------
 
+  /**
+   * 窗口取配置值；配置没写就问端点（/models），答案记下来，一次会话只问一次。
+   *
+   * 两边都没有时保持 0：0 表示未知，压缩与百分比据此显示「未知」，而不是拿一个编出来的分母
+   * 说话。这里原先回退到 1000000，触发线随之落在 500000 tokens——永远到不了，自动压缩等于
+   * 没接，状态栏的百分比也一直在用一个不存在的窗口做除法。
+   */
+  private async applyContextWindow(config: LlmConfig): Promise<void> {
+    if (config.contextWindow > 0) {
+      this.setContextWindow(config.contextWindow);
+      return;
+    }
+    if (this.windowProbe === undefined) {
+      this.windowProbe = await fetchContextWindow(config);
+      // 读数先落在日志里：窗口决定触发线与状态栏的分母，它是不是 0 关系到压缩有没有接上。
+      hilog.info(0x0000, 'hvoltide', 'context window from endpoint: %{public}d', this.windowProbe);
+    }
+    this.setContextWindow(this.windowProbe);
+  }
+
+  /** 端点上读到的窗口；undefined 表示还没问过，0 表示问过但没有答案。 */
+  private windowProbe: number | undefined = undefined;
+
   async send(config: LlmConfig, userText: string, context: string, images: string[],
     sink: LoopSink): Promise<void> {
     if (this.running) {
@@ -198,6 +243,7 @@ export class ChatSession {
       return;
     }
     this.running = true;
+    await this.applyContextWindow(config);
     this.abort = new AbortFlag();
     let closed = '';
     try {
@@ -214,6 +260,7 @@ export class ChatSession {
         }
         this.step += 1;
         this.session.append('step/start', { turn: this.turn, step: this.step });
+        this.snapshotStep();
         if (firstStep) {
           // 人的话属于第一步：step/start 之后才进 surface
           const said = userMessage(userText, images);
@@ -304,6 +351,7 @@ export class ChatSession {
             this.session.appendToolResult(call.id, 'error: 这一步请求失败，工具没有执行', true,
               Date.now());
           }
+          this.annotateStep();
           this.session.append('step/end', { turn: this.turn, step: this.step });
           sink.onError(failure);
           closed = 'request-failed';
@@ -313,6 +361,7 @@ export class ChatSession {
         if (assembled.trim().length === 0 && reasoning.trim().length === 0 && calls.length === 0) {
           // 空回复不是一步：记一条 attempt 收尾。DSH 不重试。
           this.session.append('assistant/attempt', { turn: this.turn, step: this.step, stream: [] });
+          this.annotateStep();
           this.session.append('step/end', { turn: this.turn, step: this.step });
           sink.onError('模型返回了空响应');
           closed = 'empty';
@@ -328,6 +377,7 @@ export class ChatSession {
           }, 'append');
 
         if (calls.length === 0) {
+          this.annotateStep();
           this.session.append('step/end', { turn: this.turn, step: this.step });
           closed = 'done';
           break;
@@ -335,6 +385,7 @@ export class ChatSession {
 
         const batch = await runBatch(calls, (call: ToolCall) => this.invoke(call),
           this.session, sink, () => this.abort.cancelled, () => Date.now());
+        this.annotateStep();
         this.session.append('step/end', { turn: this.turn, step: this.step });
         if (batch.cancelled) {
           closed = 'cancelled';
@@ -365,15 +416,29 @@ export class ChatSession {
     return total;
   }
 
-  /** 消息预算 = 窗口容量 - 预留给回复的 token，对应 DSH 的 messageBudgetTokens。 */
+  /**
+   * 消息预算 = 窗口容量 - 预留给回复的 token，对应 dsh-compaction-basic 的 messageBudgetTokens。
+   * 触发线取预算的 50%（设计文档要求），不是「窗口快满才动」。
+   */
   private messageBudgetTokens(): number {
     return this.session.contextWindow > this.session.reservedCompletionTokens
       ? this.session.contextWindow - this.session.reservedCompletionTokens : 0;
   }
 
-  /** 占用越过消息预算就该压缩，判据与 dsh-compaction-basic 的 resolveCompactSpec 一致。 */
+  /** 触发线 = contextWindow × 0.5（dsh-compaction-instant 的 thresholdRatio）。 */
+  private pressureBudgetTokens(): number {
+    const window: number = this.session.contextWindow;
+    return window > 0 ? Math.floor(window * COMPACT_THRESHOLD_RATIO) : 0;
+  }
+
+  /** 尾部原样保留 = contextWindow × 0.05（instant 的 retainRatio）。 */
+  private retainBudgetTokens(): number {
+    const window: number = this.session.contextWindow;
+    return window > 0 ? Math.floor(window * COMPACT_RETAIN_RATIO) : 0;
+  }
+
   private needsCompaction(): boolean {
-    const budget = this.messageBudgetTokens();
+    const budget = this.pressureBudgetTokens();
     return budget > 0 && this.contextTokens() >= budget;
   }
 
@@ -381,13 +446,17 @@ export class ChatSession {
     if (!this.needsCompaction()) {
       return false;
     }
-    return await this.runCompaction(config) !== null;
+    const attempt = await this.runCompaction(config);
+    return attempt.outcome !== null;
   }
 
-  async compactNow(config: LlmConfig): Promise<CompactOutcome | null> {
+  /** 手动压缩：回合在跑时不再吞掉请求，而是回报原因（界面据此显示不同文案）。 */
+  async compactNow(config: LlmConfig): Promise<CompactAttempt> {
     if (this.running) {
-      return null;
+      return { outcome: null, stop: 'busy' };
     }
+    // 手动压缩也要有窗口：否则触发线算不出来，界面只能显示「无安全区间」。
+    await this.applyContextWindow(config);
     return this.runCompaction(config);
   }
 
@@ -408,7 +477,7 @@ export class ChatSession {
     };
     const balanced = (seq: number): boolean => this.toolPairsBalancedBefore(seq);
     return selectCompactableRange(seqs, priced as Object[] as PricedNode[], isSystemHead, balanced,
-      this.session.reservedCompletionTokens);
+      this.retainBudgetTokens());
   }
 
   /** 在 seq 之前，tool call 与 result 是否已经配对 —— 选区不能切开一对调用与结果。 */
@@ -433,18 +502,22 @@ export class ChatSession {
     return true;
   }
 
-  private async runCompaction(config: LlmConfig): Promise<CompactOutcome | null> {
+  private async runCompaction(config: LlmConfig): Promise<CompactAttempt> {
+    // 窗口未知时保留预算也是 0，selectRegion 会把除末条以外的历史全选进去。宁可什么都不做。
+    if (this.session.contextWindow <= 0) {
+      return { outcome: null, stop: 'unknown-window' };
+    }
     const region = this.selectRegion();
     if (region === null) {
-      return null;
+      return { outcome: null, stop: 'no-region' };
     }
     const at = Date.now();
     this.compactionId = 'cmp-' + String(at);
     const startEvent = this.session.append('compaction/start', { compactionId: this.compactionId, turn: Math.max(this.turn, 1) });
-    const summary = await this.summarize(config, region);
+    const summary: string = this.compileRegion(region);
     if (summary.trim().length === 0) {
       this.session.append('compaction/end', { compactionId: this.compactionId, turn: Math.max(this.turn, 1) });
-      return null;
+      return { outcome: null, stop: 'empty-summary' };
     }
     const before = this.contextTokens();
     const shadowed: number[] = [];
@@ -465,68 +538,78 @@ export class ChatSession {
         shadowedTokenCount: shadowedTokens
       });
     const sources: number[] = [startEvent.seq, summaryEvent.seq].concat(shadowed);
-    this.session.append('user/message', userMessage('(compacted context)\n' + summary, []),
+    // checkpoint 是压缩的唯一表示：一条 user/message，来源标 `checkpoint`，首行写明它替代了哪一段。
+    // 界面在它落在日志里的位置画一行，不从 compaction/summary 反推位置——反推出来的位置没有归属，
+    // 只能排到最下方，看上去像刚刚发生的事。
+    const checkpoint = userMessage(
+      checkpointText(region.startSeq, region.endSeq, shadowedTokens, summary), []);
+    checkpoint.source = 'checkpoint';
+    this.session.append('user/message', checkpoint,
       { op: 'replace', startSeq: region.startSeq, endSeq: region.endSeq }, sources);
     this.session.append('compaction/end', { compactionId: this.compactionId, turn: Math.max(this.turn, 1) });
     const after = this.contextTokens();
     if (after >= before) {
-      return null;
+      hilog.warn(0x0000, 'hvoltide',
+        'compaction did not shrink: before=%{public}d after=%{public}d', before, after);
+      return { outcome: null, stop: 'not-smaller' };
     }
     hilog.info(0x0000, 'hvoltide',
       'compacted seq %{public}d-%{public}d tokens=%{public}d', region.startSeq, region.endSeq, after);
-    return { from: region.startSeq, to: region.endSeq, tokens: after };
+    return { outcome: { from: region.startSeq, to: region.endSeq, tokens: after }, stop: null };
   }
 
-  /** 生成摘要的一次请求：重放系统提示与被替换的那段，再追加固定指令。 */
-  private async summarize(config: LlmConfig, region: Region): Promise<string> {
+  /**
+   * 把选中的区间编译成 checkpoint 文本。
+   *
+   * 这里不调模型：VCC 的路径是确定性切片——工具调用压成一行并带 `-> result N` 指针，
+   * 工具结果不抄正文，reasoning 不进台账。摘要式压缩会把路径与命令改写成「差不多」的说法，
+   * 也会多花一次推理，这条路径不用。
+   */
+  private compileRegion(region: Region): string {
+    const seqs: number[] = [];
     const messages: ChatMessage[] = [];
-    let system = '';
+    const resultSeqs: Map<string, number> = new Map<string, number>();
     for (const seq of this.session.surfaceSeqs()) {
-      const message = this.session.deriveEventMessage(seq);
-      if (message !== undefined && message.role === 'system') {
-        system = message.content;
+      if (seq >= region.startSeq && seq <= region.endSeq) {
+        const message: ChatMessage | undefined = this.session.deriveEventMessage(seq);
+        if (message !== undefined) {
+          seqs.push(seq);
+          messages.push(message);
+          if (message.role === 'tool' && message.toolCallId.length > 0) {
+            resultSeqs.set(message.toolCallId, seq);
+          }
+        }
       }
     }
-    if (system.length > 0) {
-      messages.push(systemMessage(system));
-    }
-    for (const message of this.session.messagesInRange(region.startSeq, region.endSeq)) {
-      messages.push(message);
-    }
-    messages.push(runtimeMessage(COMPACTION_INSTRUCTION));
-    const parts: string[] = [];
-    const local: AbortFlag = new AbortFlag();
-    let failure = '';
-    await this.transport(config, messages, {
-      onText: (delta: string) => {
-        parts.push(delta);
-      },
-      onThought: (delta: string) => {
-      },
-      onToolCall: (call: ToolCall) => {
-      },
-      onUsage: (usage: Usage) => {
-      },
-      onDone: () => {
-      },
-      onError: (message: string) => {
-        failure = message;
-      }
-    }, local);
-    if (failure.length > 0) {
-      hilog.warn(0x0000, 'hvoltide', 'compaction summary failed: %{public}s', failure);
-      return '';
-    }
-    return parts.join('');
+    const checkpoint: Checkpoint = compileCheckpoint({
+      seqs: seqs, messages: messages, resultSeqs: resultSeqs,
+      turns: Math.max(this.turn, 1)
+    });
+    return checkpoint.text;
   }
 
   // --- 工具 ------------------------------------------------------------------------------------
 
   private async invoke(call: ToolCall): Promise<string> {
+    // 一个步骤里可能调多个工具：快照 message 的 tool 段记第一个，files 段数改动次数。
+    if (this.stepTool.length === 0) {
+      this.stepTool = call.name;
+    }
     const out: string = await dispatch(call, (name: string) => {
       const spec: ToolSpec | undefined = TOOLS.get(name);
-      return spec === undefined ? undefined : { handler: spec.handler };
+      if (spec === undefined) {
+        return undefined;
+      }
+      return { handler: spec.handler, approval: spec.approval };
+    }, (tool: string, detail: string): Promise<boolean> => {
+      return APPROVAL.request(tool, detail);
     });
+    // 改动文件的工具只有这几个；数的是调用次数，不是真正落盘的文件数——
+    // apply_patch 一次可改多个文件，精确计数要解析结果，等有步骤真的依赖这个数字再说。
+    const mutating: string[] = ['write', 'edit', 'apply_patch'];
+    if (mutating.indexOf(call.name) >= 0 && out.indexOf('error') !== 0) {
+      this.stepFiles += 1;
+    }
     // 截图工具只返回路径，模型看不到文件；落盘成功就把它收起来，下一次请求带上。
     if (call.name === 'screenshot' && out.indexOf('code=0') >= 0) {
       this.collectShot();
@@ -549,6 +632,78 @@ export class ChatSession {
   }
 
   /** 截图落盘后读成 data URL。读不到不算失败。 */
+  /**
+   * 每步落一个快照。失败不中断这一步：快照是回退用的旁路能力，它坏了不该让对话停下，
+   * 但要留下一条日志，因为「以为有快照其实没有」比「没有快照」更危险。
+   */
+  private snapshotStep(): void {
+    const root = this.projectRootOf();
+    if (root.length === 0) {
+      return;
+    }
+    const cut = root.lastIndexOf('/');
+    const name = cut >= 0 ? root.substring(cut + 1) : root;
+    // libgit2 的 init 只建 .git 自身，父目录必须先存在，否则报 No such file or directory。
+    const base = getContext().filesDir + '/snapshots';
+    const snapshots = base + '/' + name;
+    this.stepTool = '';
+    this.stepFiles = 0;
+    this.stepSnapshot = false;
+    try {
+      if (!fs.accessSync(base)) {
+        fs.mkdirSync(base);
+      }
+      if (!fs.accessSync(snapshots)) {
+        fs.mkdirSync(snapshots);
+      }
+    } catch (e) {
+      hilog.warn(0x0000, 'hvoltide', 'snapshot dir failed: %{public}s', (e as Error).message);
+      return;
+    }
+    // 不等它：落快照是旁路能力，等它就把这一步的响应拖住了。
+    if (this.snapshotBusy) {
+      return;
+    }
+    this.snapshotBusy = true;
+    this.stepSnapshot = true;
+    snapshotCommit(snapshots, root, 'step=' + this.step).then((out: string) => {
+      if (out.indexOf('"error"') >= 0) {
+        this.stepSnapshot = false;
+        hilog.warn(0x0000, 'hvoltide', 'snapshot skipped: %{public}s', out);
+      }
+    }).catch((e: Error) => {
+      this.stepSnapshot = false;
+      hilog.warn(0x0000, 'hvoltide', 'snapshot rejected: %{public}s', e.message);
+    }).finally(() => {
+      this.snapshotBusy = false;
+    });
+  }
+
+  /**
+   * 步骤结束时把 tool 与 files 补进这一条快照的 message。
+   *
+   * 快照落在写文件之前，那时这两个值还不知道；commit 的树不动，只换 message，所以补写不会
+   * 改变回退能恢复到的内容。
+   */
+  private annotateStep(): void {
+    if (!this.stepSnapshot) {
+      return;
+    }
+    const root = this.projectRootOf();
+    if (root.length === 0) {
+      return;
+    }
+    const cut = root.lastIndexOf('/');
+    const name = cut >= 0 ? root.substring(cut + 1) : root;
+    const snapshots = getContext().filesDir + '/snapshots/' + name;
+    const tool = this.stepTool.length === 0 ? 'none' : this.stepTool;
+    const message = 'step=' + this.step + '|tool=' + tool + '|files=' + this.stepFiles;
+    snapshotAnnotate(snapshots, root, message).catch((e: Error) => {
+      hilog.warn(0x0000, 'hvoltide', 'snapshot annotate failed: %{public}s', e.message);
+    });
+    this.stepSnapshot = false;
+  }
+
   private collectShot(): void {
     try {
       const path: string = getContext().filesDir + '/screenshot.jpeg';
@@ -587,4 +742,15 @@ function streamOf(type: string, text: string, time: number): Object[] {
     return [];
   }
   return [{ 'type': type, 'time0': time, 'index': 0, 'dt': [0], 'texts': [text] }];
+}
+
+/**
+ * checkpoint 的正文：首行说明它替代了哪一段、多大，正文跟在后面空一行。
+ *
+ * 这一行跟着消息一起落盘，所以界面不需要另外的记账事件就能画出它——位置就是消息的位置。
+ */
+function checkpointText(from: number, to: number, tokens: number, body: string): string {
+  const head = '已压缩 seq ' + String(from) + '-' + String(to) + ' · 约 ' + String(tokens) + ' tokens';
+  const trimmed = body.trim();
+  return trimmed.length === 0 ? head : head + '\n\n' + trimmed;
 }

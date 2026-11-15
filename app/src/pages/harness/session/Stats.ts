@@ -21,13 +21,18 @@ export interface SessionStats {
   pressure: number;
   /** 最近一次请求的 prompt token 数，也就是当前上下文大小；0 表示还没有读数。 */
   contextTokens: number;
-  /** 最近一步的输出速率（tok/s）；0 表示还没有可算的区间。 */
+  /** 全会话的输出速率（tok/s，累计输出 / 累计生成时长）；0 表示还没有可算的区间。 */
   rate: number;
+  /** 全会话的生成 token 数（completion + reasoning）。 */
+  outputTokens: number;
+  /** 全会话的生成时长（毫秒），只累加真正测到生成区间的步。 */
+  generationMs: number;
 }
 
 export function emptyStats(): SessionStats {
   return {
-    turns: 0, steps: 0, totalTokens: 0, cacheHit: -1, pressure: 0, contextTokens: 0, rate: 0
+    turns: 0, steps: 0, totalTokens: 0, cacheHit: -1, pressure: 0, contextTokens: 0, rate: 0,
+    outputTokens: 0, generationMs: 0
   };
 }
 
@@ -46,6 +51,10 @@ export function foldStats(events: SessionEvent[], contextWindow: number): Sessio
   // 这一步是否已经有精确的生成区间；没有就用整步墙钟时间兜底（旧日志没有这个字段）。
   let stepCompletion = 0;
   let stepHadElapsed = false;
+  // 速率按全会话累计：单步只有几百毫秒时，除出来的数在 200~900 tok/s 之间乱跳，
+  // 那不是模型速度，是采样窗口太短。累计口径与 dsh-session-stats 的稳定读数一致。
+  let outputTotal = 0;
+  let generationTotal = 0;
 
   for (const event of events) {
     if (event === undefined || event === null) {
@@ -90,15 +99,23 @@ export function foldStats(events: SessionEvent[], contextWindow: number): Sessio
     lastCompletion = usage.completionTokens + usage.reasoningTokens;
     stepCompletion = lastCompletion;
     // 速率优先用这一步自己测到的生成区间；没测到就等 step/end 用墙钟时间兜底。
+    // 分子分母必须来自同一批步：只累加同时有输出与生成时长的步，否则旧日志里
+    // 缺 elapsedMs 的那些步会把分子抬高、分母不动，算出 953 这种假速率。
     if (usage.elapsedMs > 0 && lastCompletion > 0) {
       lastRate = (lastCompletion * 1000) / usage.elapsedMs;
+      outputTotal += lastCompletion;
+      generationTotal += usage.elapsedMs;
       stepHadElapsed = true;
     }
   }
 
   const stats = emptyStats();
   stats.turns = turns;
-  stats.rate = lastRate >= 0.05 ? lastRate : 0;
+  // 样本太小就不给读数：几百 token 除以几百毫秒能算出三位数，那不是吞吐。
+  stats.rate = generationTotal >= 300 && outputTotal >= 200
+    ? (outputTotal * 1000) / generationTotal : 0;
+  stats.outputTokens = outputTotal;
+  stats.generationMs = generationTotal;
   stats.steps = steps;
   stats.totalTokens = totalTokens;
   stats.contextTokens = lastPrompt >= 0 ? lastPrompt : 0;

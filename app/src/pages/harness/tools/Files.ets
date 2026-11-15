@@ -7,6 +7,10 @@ import { globMatcher, relativeTo, safePath, walkFiles } from '../fs/Walk';
 import { AskQuestion } from '../../model/Ask';
 import { listProjects, projectDir } from '../../model/Project';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['read', 'glob', 'grep'];
+
+
 function projectLabel(dir: string): string {
   const cut = dir.lastIndexOf('/');
   return cut >= 0 ? dir.substring(cut + 1) : dir;

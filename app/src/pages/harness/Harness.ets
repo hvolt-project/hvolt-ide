@@ -7,26 +7,12 @@ import socket from '@ohos.net.socket';
 import util from '@ohos.util';
 import { McpServer } from './mcp/Server';
 import { TOOLS, ToolRegistry } from './mcp/Registry';
-import { FileContext, registerFileTools } from './tools/Files';
-import { registerWriteTool } from './tools/Write';
-import { registerEditTool } from './tools/Edit';
-import { registerBuildTools } from './tools/Build';
-import { registerDeployTool } from './tools/Deploy';
-import { registerLogTools } from './tools/Logs';
-import { registerDeviceTools } from './tools/Device';
-import { registerSandboxTools } from './tools/Sandbox';
-import { registerJsEvalTools } from './tools/JsEval';
-import { registerJobTools } from './tools/Jobs';
-import { registerTodoTools } from './tools/Todo';
-import { registerWebTools } from './tools/Web';
-import { registerUiTools } from './tools/UI';
-import { registerSdkTools } from './tools/Sdk';
-import { registerChatTool } from './tools/Chat';
-import { registerRecallTool } from './tools/Recall';
-import { registerAskTool } from './tools/Ask';
-import { registerSkillTool } from './tools/Skill';
+import { FileContext } from './tools/Files';
 import { installApprovalGate } from './Approval';
 import { buildSystemPrompt } from './Prompt';
+// The tool list is generated from each tool file's MCP_EXPOSE by the pre build step in
+// app/hvolt.toml. Adding a tool file registers it; removing the export hides it.
+import { registerExposedTools } from './Registry.generated';
 
 /** Port the loopback endpoint binds to; the built-in client uses the same number. */
 export const MCP_PORT: number = 8765;
@@ -62,24 +48,7 @@ export function startHarness(ctx: FileContext, registry: ToolRegistry = TOOLS): 
     return;
   }
   registerPing();
-  registerFileTools(registry, ctx);
-  registerWriteTool(registry, ctx);
-  registerEditTool(registry, ctx);
-  registerBuildTools(registry, ctx);
-  registerDeployTool(registry, ctx);
-  registerLogTools(registry, ctx);
-  registerDeviceTools(registry, ctx);
-  registerSandboxTools(registry, ctx);
-  registerJsEvalTools(registry);
-  registerJobTools(registry, ctx);
-  registerTodoTools(registry, ctx);
-  registerWebTools(registry, ctx);
-  registerUiTools(registry, ctx);
-  registerSdkTools(registry);
-  registerChatTool(registry, ctx);
-  registerRecallTool(registry, ctx);
-  registerAskTool(registry, ctx);
-  registerSkillTool(registry, ctx);
+  registerExposedTools(registry, ctx);
   // The surface the model will see, named once at startup: a tool that fails to register is
   // otherwise invisible until the model asks for it and gets "no such tool".
   const names: string[] = [];

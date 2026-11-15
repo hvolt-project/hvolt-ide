@@ -7,6 +7,10 @@
 import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['chat'];
+
+
 const MAX_REPLY_CHARS: number = 4000;
 
 export function registerChatTool(registry: ToolRegistry, ctx: FileContext): void {

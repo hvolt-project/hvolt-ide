@@ -10,6 +10,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 import { readPref } from '../../model/Prefs';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['web_fetch', 'web_search'];
+
+
 /** Text a single fetch may return. Larger pages are cut and marked, never silently truncated. */
 const MAX_BODY = 60000;
 const TIMEOUT_MS = 20000;

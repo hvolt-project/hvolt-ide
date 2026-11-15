@@ -15,6 +15,15 @@ import { MermaidView } from './MermaidView';
 export struct MarkdownView {
   @Prop dark: boolean = true;
   @Prop text: string = '';
+  /**
+   * 正文字号基准。标题按它相对放大，段落就是它本身。
+   *
+   * 组内的过程内容要压小（次级内容），原先字号写死在 blockSize 里，组内只能和组外正文
+   * 一样大，层级看不出来。
+   */
+  @Prop baseSize: number = 14;
+  /** 次级内容（组内）用淡一档的文字色，避免和正文抢同一层。 */
+  @Prop muted: boolean = false;
 
   private p(): Palette {
     return palette(this.dark);
@@ -39,15 +48,15 @@ export struct MarkdownView {
 
   private blockSize(kind: MdKind): number {
     if (kind === 'h1') {
-      return 18;
+      return this.baseSize + 4;
     }
     if (kind === 'h2') {
-      return 16;
+      return this.baseSize + 2;
     }
     if (kind === 'h3') {
-      return 15;
+      return this.baseSize + 1;
     }
-    return 14;
+    return this.baseSize;
   }
 
   @Builder
@@ -175,9 +184,10 @@ export struct MarkdownView {
         } else {
           Text(plainInline(block.text))
             .fontSize(this.blockSize(block.kind))
-            .lineHeight(block.kind === 'p' ? 21 : (this.blockSize(block.kind) + 8))
+            // 行高跟着字号走：写死 21 时，11 号字会被拉出很大行距，次级内容看着松垮。
+            .lineHeight(block.kind === 'p' ? (this.baseSize + 7) : (this.blockSize(block.kind) + 4))
             .fontWeight(block.kind === 'p' ? FontWeight.Normal : FontWeight.Medium)
-            .fontColor(this.p().textPrimary)
+            .fontColor(this.muted ? this.p().textSecondary : this.p().textPrimary)
             .width('100%')
             .textAlign(TextAlign.Start)
         }

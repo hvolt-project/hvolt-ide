@@ -7,6 +7,13 @@
 #include "sandbox_sh.h"
 #include "js_eval.h"
 
+// git 导出在 git_napi.cpp 里注册到同一个 exports 对象上：一个模块名，两组函数。
+void RegisterGitNapi(napi_env env, napi_value exports);
+napi_value JsEvalBeginEntry(napi_env env, napi_callback_info info);
+napi_value JsEvalResumeEntry(napi_env env, napi_callback_info info);
+napi_value JsEvalAbortEntry(napi_env env, napi_callback_info info);
+void RegisterRewindNapi(napi_env env, napi_value exports);
+
 #include <sys/stat.h>
 #include <fcntl.h>
 #include <dirent.h>
@@ -1191,13 +1198,18 @@ napi_value Init(napi_env env, napi_value exports)
         { "sandboxProbe", nullptr, SandboxProbe, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "sandboxSh", nullptr, SandboxSh, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "jsEval", nullptr, JsEval, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "jsEvalBegin", nullptr, JsEvalBeginEntry, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "jsEvalResume", nullptr, JsEvalResumeEntry, nullptr, nullptr, nullptr, napi_default, nullptr },
+        { "jsEvalAbort", nullptr, JsEvalAbortEntry, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamStart", nullptr, StreamStart, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamRead", nullptr, StreamRead, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamStop", nullptr, StreamStop, nullptr, nullptr, nullptr, napi_default, nullptr },
         { "streamNext", nullptr, StreamNext, nullptr, nullptr, nullptr, napi_default, nullptr },
     };
-    OH_LOG_INFO(LOG_APP, "navi init v2 exports=11 jsEval=%{public}d", 1);
-    napi_define_properties(env, exports, 11, desc);
+    OH_LOG_INFO(LOG_APP, "navi init v2 exports=14 jsEval=%{public}d", 1);
+    napi_define_properties(env, exports, 14, desc);
+    RegisterGitNapi(env, exports);
+    RegisterRewindNapi(env, exports);
     return exports;
 }
 }  // namespace

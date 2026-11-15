@@ -1,3 +1,4 @@
+import hilog from '@ohos.hilog';
 import { palette, Palette, GAP } from '../model/Palette';
 import { importSdk, SdkImportResult, sdkStatus } from '../model/SdkImport';
 import { DURATION, spring } from '../model/Motion';
@@ -12,8 +13,14 @@ import { loadExtraInstructions, saveExtraInstructions } from '../harness/Prompt'
 import { listModels, ModelList } from '../harness/loop/Models';
 import {
   FONT_SIZES, KEY_AUTOCONNECT, KEY_AUTOSAVE, KEY_FONT, KEY_LINES, KEY_OBFUSCATE, KEY_TAB,
-  KEY_SAVE_ON_SWITCH, KEY_TAIL, KEY_WRAP, TAILS, TAB_SIZES, readObfuscation, setObfuscation
+  KEY_COLLAPSE_TIMING, KEY_SAVE_ON_SWITCH, KEY_TAIL, KEY_TRANSCRIPT_VIEW, KEY_WRAP, TAILS, TAB_SIZES,
+  readObfuscation,
+  setObfuscation
 } from '../model/Options';
+import {
+  COLLAPSE_TIMINGS, CollapseTiming, collapseTimingLabel, collapseTimingOf, DEFAULT_TRANSCRIPT_VIEW,
+  TRANSCRIPT_VIEW_MODES, viewModeLabel, viewModeOf
+} from '../model/Policy';
 
 // A switch row: label left, control right, the control writes through immediately.
 @Component
@@ -70,6 +77,10 @@ export struct SettingsSheet {
   // Plain state, filled from AppStorage when the sheet appears: a @StorageProp getter
   // for a key that is not in the store yet takes the whole page down on this device.
   @State private appearance: number = 0;
+  /** 工作步骤展示档位。用 @State 而不是每次去读 AppStorage：后者改了不会让组件重渲染，
+   *  点完选项看起来像没反应。 */
+  @State private transcriptView: string = DEFAULT_TRANSCRIPT_VIEW;
+  @State private collapseTiming: string = 'immediate';
   @State private llmBase: string = '';
   @State private llmModel: string = '';
   @State private llmToken: string = '';
@@ -119,6 +130,7 @@ export struct SettingsSheet {
     this.deviceDraft = this.device;
     this.devFeedback = this.linkState;
     this.appearance = AppStorage.get<number>('appearance') ?? 0;
+    this.transcriptView = viewModeOf(AppStorage.get<string>(KEY_TRANSCRIPT_VIEW) ?? DEFAULT_TRANSCRIPT_VIEW);
     this.autoDeploy = AppStorage.get<string>('autodeploy') ?? '0';
     this.fontPx = AppStorage.get<number>(KEY_FONT) ?? 14;
     this.lineNumbers = AppStorage.get<string>(KEY_LINES) ?? '1';
@@ -401,6 +413,28 @@ export struct SettingsSheet {
     return out;
   }
 
+  /** 当前档位在四个选项里的下标；读不到就回默认档。 */
+  private viewIndex(): number {
+    const current = viewModeOf(AppStorage.get<string>(KEY_TRANSCRIPT_VIEW) ?? DEFAULT_TRANSCRIPT_VIEW);
+    return TRANSCRIPT_VIEW_MODES.indexOf(current);
+  }
+
+  private collapseLabels(): string[] {
+    const out: string[] = [];
+    for (const timing of COLLAPSE_TIMINGS) {
+      out.push(collapseTimingLabel(timing));
+    }
+    return out;
+  }
+
+  private viewLabels(): string[] {
+    const out: string[] = [];
+    for (const mode of TRANSCRIPT_VIEW_MODES) {
+      out.push(viewModeLabel(mode));
+    }
+    return out;
+  }
+
   private tabLabels(): string[] {
     const out: string[] = [];
     for (const s of TAB_SIZES) {
@@ -427,10 +461,17 @@ export struct SettingsSheet {
     if (key === KEY_TAIL) {
       return TAILS.indexOf(this.logTail);
     }
+    if (key === KEY_TRANSCRIPT_VIEW) {
+      return TRANSCRIPT_VIEW_MODES.indexOf(viewModeOf(this.transcriptView));
+    }
+    if (key === KEY_COLLAPSE_TIMING) {
+      return COLLAPSE_TIMINGS.indexOf(collapseTimingOf(this.collapseTiming));
+    }
     return this.appearance;
   }
 
   private pick(key: string, i: number): void {
+    hilog.info(0x0000, 'hvoltide', 'settings pick: %{public}s -> %{public}d', key, i);
     if (key === KEY_FONT) {
       this.setNumber(KEY_FONT, FONT_SIZES[i]);
       return;
@@ -441,6 +482,16 @@ export struct SettingsSheet {
     }
     if (key === KEY_TAIL) {
       this.setNumber(KEY_TAIL, TAILS[i]);
+      return;
+    }
+    if (key === KEY_TRANSCRIPT_VIEW) {
+      this.transcriptView = TRANSCRIPT_VIEW_MODES[i];
+      this.set(KEY_TRANSCRIPT_VIEW, this.transcriptView);
+      return;
+    }
+    if (key === KEY_COLLAPSE_TIMING) {
+      this.collapseTiming = COLLAPSE_TIMINGS[i];
+      this.set(KEY_COLLAPSE_TIMING, this.collapseTiming);
       return;
     }
     this.appearance = i;
@@ -697,6 +748,10 @@ export struct SettingsSheet {
               this.set(KEY_AUTOSAVE, on ? '1' : '0');
             }
           })
+
+          this.Section('对话')
+          this.OptionRow('工作步骤展示', this.viewLabels(), KEY_TRANSCRIPT_VIEW)
+          this.OptionRow('完成时折叠', this.collapseLabels(), KEY_COLLAPSE_TIMING)
 
           this.Section('构建')
           SwitchRow({

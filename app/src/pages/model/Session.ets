@@ -30,6 +30,7 @@ import { SkillStore } from '../harness/SkillStore';
 import { SelfSource } from '../harness/SelfSource';
 import { catalogFingerprint, catalogText } from '../harness/loop/Skills';
 import { ChatSession } from '../harness/loop/Loop';
+import type { CompactAttempt } from '../harness/session/Compact';
 import type { CompactOutcome } from '../harness/session/Compact';
 import { Usage } from '../harness/loop/Types';
 import { LlmConfig, loadLlmConfig } from '../harness/loop/Settings';
@@ -353,6 +354,19 @@ export class Session {
     // 内存里——关掉项目后 harness 面显示的还是刚才那个项目。
     this.chat = new ChatSession();
     this.chatWritable = true;
+    // 换工程会重建会话，contextWindow 随之归零——状态栏的占用百分比因此没有分母。
+    // 这里重新问一次：拿配置或端点，都不必等第一条消息。
+    loadLlmConfig().then((config: LlmConfig) => {
+      this.chat.warmContextWindow(config).then(() => {
+        this.onChange();
+      }).catch(() => {
+      });
+    }).catch(() => {
+    });
+    if (text.length === 0) {
+      // 没有历史文件（或上次已判坏改名）：说一句，免得读者以为是加载失败。
+      hilog.info(0x0000, 'hvoltide', 'chat history absent: %{public}s', path);
+    }
     if (text.length > 0) {
       const ok = this.chat.load(text);
       if (!ok) {
@@ -370,7 +384,16 @@ export class Session {
         this.append('对话历史不完整，已另存为 ' + broken.split('/').pop());
       } else {
         this.savedEvents = this.chat.eventCount();
-        hilog.info(0x0000, 'hvoltide', 'chat restored: %{public}d events', this.savedEvents);
+        if (this.chat.truncated > 0) {
+          hilog.warn(0x0000, 'hvoltide', 'chat restored: %{public}d events, dropped %{public}d rows',
+            this.savedEvents, this.chat.truncated);
+        } else {
+          hilog.info(0x0000, 'hvoltide', 'chat restored: %{public}d events', this.savedEvents);
+        }
+        if (this.chat.truncated > 0) {
+          // 只丢尾巴时说一句：读者该知道最后那几步没读回来，而不是以为对话凭空短了。
+          this.append('有 ' + String(this.chat.truncated) + ' 行历史没读进来（上次写入被中断）');
+        }
       }
     }
     // 读完历史就通知界面：转写、统计都是从这里恢复的，不通知就一直是空的。
@@ -474,30 +497,54 @@ export class Session {
     this.chat.setSystem(prompt);
     // State travels with the message, not in the system prompt: that keeps the cacheable
     // prefix identical from turn to turn.
+    // 每次发送前把当前项目根交给会话，快照据此决定记哪个工作树；项目可能刚切换。
+    this.chat.setProjectRoot(() => {
+      return this.projectPath();
+    });
     const state = runtimeBlock({
       projectName: this.project,
       currentFile: this.current,
       deviceAddress: this.device,
       connected: this.link === 2
     });
+    // 进程被带走时最多损失这几百毫秒：事件一落地就排一次落盘，而不是等整回合结束。
+    // 原来只在 send 的末尾存一次，闪退或被杀就整回合丢失——磁盘上那份历史因此常常是空的。
+    let savePending = false;
+    const scheduleSave = (): void => {
+      if (savePending) {
+        return;
+      }
+      savePending = true;
+      setTimeout(() => {
+        savePending = false;
+        this.saveChat();
+      }, 300);
+    };
     await this.chat.send(config, userText, state, images, {
       onText: (delta: string) => {
         onEvent('text', delta);
+        scheduleSave();
       },
       onThought: (delta: string) => {
         onEvent('thought', delta);
+        scheduleSave();
       },
       onToolStart: (call) => {
         onEvent('tool', call.name + ' ' + call.argumentsJson);
+        scheduleSave();
       },
       onToolResult: (id: string, text: string) => {
         onEvent('result', text);
+        scheduleSave();
       },
       onError: (message: string) => {
         onEvent('error', message);
+        scheduleSave();
       },
       onDone: () => {
         onEvent('done', '');
+        // 收尾这一次不等合批：一整轮结束必须落盘，重启才能原样读回来。
+        this.saveChat();
       }
     });
     this.saveChat();
@@ -514,19 +561,22 @@ export class Session {
   }
 
   /** Compacts the older part of the conversation now; reports what left the context. */
-  async chatCompact(): Promise<CompactOutcome | null> {
+  async chatCompact(): Promise<CompactAttempt> {
     const config: LlmConfig = await loadLlmConfig();
     if (!config.ready()) {
-      return null;
+      return { outcome: null, stop: 'no-region' };
     }
-    const outcome = await this.chat.compactNow(config);
+    const attempt = await this.chat.compactNow(config);
+    const outcome = attempt.outcome;
     if (outcome !== null) {
       this.saveChat();
       hilog.info(0x0000, 'hvoltide',
         'chat compacted: seq %{public}d-%{public}d turns=%{public}d tokens=%{public}d',
         outcome.from, outcome.to, outcome.turns, outcome.tokens);
+    } else {
+      hilog.warn(0x0000, 'hvoltide', 'compact skipped: %{public}s', String(attempt.stop));
     }
-    return outcome;
+    return attempt;
   }
 
   private dir(): string {

@@ -7,6 +7,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { safePath } from '../fs/Walk';
 import { FileContext, requireProject } from './Files';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['apply_patch', 'edit'];
+
+
 /** Number of non-overlapping occurrences of `needle` in `text`. */
 export function occurrences(text: string, needle: string): number {
   if (needle.length === 0) {

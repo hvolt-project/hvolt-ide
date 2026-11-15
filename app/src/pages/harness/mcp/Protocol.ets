@@ -4,6 +4,16 @@
 // same functions serve a loopback client today and an external transport later.
 
 import { ToolRegistry, ToolSpec } from './Registry';
+import { APPROVAL } from '../Approval';
+
+/** Reads the declared rule with this call's arguments; a string rule ignores them. */
+function resolveApproval(spec: ToolSpec, args: Record<string, Object>): string {
+  const rule = spec.approval;
+  if (typeof rule === 'string') {
+    return rule;
+  }
+  return rule(args);
+}
 
 export interface RpcError {
   code: number;
@@ -115,8 +125,16 @@ async function dispatch(registry: ToolRegistry, request: Request): Promise<strin
       if (spec === undefined) {
         return response(request.id, errorResult('unknown tool: ' + name));
       }
+      const args = callArguments(request.params);
       try {
-        const text = await spec.handler(callArguments(request.params));
+        const level = resolveApproval(spec, args);
+        if (level === 'confirm') {
+          const allowed = await APPROVAL.request(name, JSON.stringify(args));
+          if (!allowed) {
+            return response(request.id, textResult('denied by user'));
+          }
+        }
+        const text = await spec.handler(args);
         return response(request.id, textResult(text));
       } catch (e) {
         return response(request.id, errorResult((e as Error).message));

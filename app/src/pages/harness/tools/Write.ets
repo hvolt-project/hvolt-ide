@@ -6,6 +6,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { safePath } from '../fs/Walk';
 import { FileContext, requireProject } from './Files';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['write'];
+
+
 /** FNV-1a over UTF-16 code units: enough to tell "same bytes" from "different bytes". */
 export function contentHash(text: string): string {
   let hash = 0x811c9dc5;

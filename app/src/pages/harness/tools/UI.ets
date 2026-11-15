@@ -9,6 +9,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 import { ToolRun, runHvolt } from './Build';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['tap', 'swipe', 'input_text', 'key_event'];
+
+
 function lastLines(text: string, lines: number): string {
   const all: string[] = text.split('\n');
   const start = all.length > lines ? all.length - lines : 0;

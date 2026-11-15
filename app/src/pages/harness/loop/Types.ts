@@ -8,8 +8,12 @@ export type Role = 'system' | 'user' | 'assistant' | 'tool';
  *  `role` is what the model is told; it cannot answer this, because the runtime writes into the
  *  same user slot the person types into. Every injected block — skill catalogue, reminders, the
  *  runtime snapshot — carries `runtime` here, so a reader decides what to draw from this field
- *  instead of matching text prefixes. */
-export type MessageSource = 'human' | 'model' | 'tool' | 'runtime';
+ *  instead of matching text prefixes.
+ *
+ *  `checkpoint` is the landed compaction: a user message that replaced an earlier span. It is the
+ *  only representation of a compaction — the reader draws it where it sits in the log, rather than
+ *  reconstructing a position from separate bookkeeping events. */
+export type MessageSource = 'human' | 'model' | 'tool' | 'runtime' | 'checkpoint';
 
 export interface ChatMessage {
   /** Log position, assigned when the message is appended. 0 until then. */

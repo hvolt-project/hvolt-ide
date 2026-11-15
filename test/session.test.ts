@@ -99,15 +99,18 @@ test('the log round-trips through jsonl', () => {
     session.messages().map((message) => message.content));
 });
 
-test('a truncated line rejects the whole file instead of silently skipping', () => {
+test('a bad line in the middle keeps the prefix instead of voiding the file', () => {
+  // 这是「历史会话加载失效」的根因：坏一行就整份判失败、文件改名 .bad-*、从空会话重开，
+  // 一次闪退就把整段对话作废。现在只丢坏行及其之后，前面的照读。
   const session = open();
   session.append('user/message', userMessage('q', '', [], 0), 'append');
   session.append('assistant/message', { message: assistantMessage('a', [], ''), usage: undefined }, 'append');
   const lines = session.dump().trim().split('\n');
   lines.splice(1, 0, '{"type":"user/message","seq":99,"data":');
   const back = open();
-  assert.equal(back.load(lines.join('\n') + '\n'), false, 'a gap in seq is not a partial load');
-  assert.equal(back.eventCount(), 0);
+  assert.equal(back.load(lines.join('\n') + '\n'), true, '坏行不该让整份作废');
+  assert.equal(back.eventCount(), 1, '坏行之前的事件要留住');
+  assert.equal(back.truncated, 2, '坏行及其之后都算丢弃');
 });
 
 test('the compaction range never starts at the system prompt or splits a tool pair', () => {

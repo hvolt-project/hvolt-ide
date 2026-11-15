@@ -1,25 +1,17 @@
 // Device tools: the ones that reach the phone itself.
 //
-// `shell` and `start` are marked confirm. Until the approval gate is wired (I6) the gate is a
-// function that refuses, so registering these tools cannot quietly run anything irreversible.
+// `shell`, `start` and `screenshot` are marked confirm. The dispatcher reads that field and asks
+// before running the handler, so nothing here has to remember to ask; a tool that forgets is still
+// gated. Keeping the check in one place is what lets a tool decide per call.
 
 import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 import { ToolRun, runHvolt } from './Build';
 import { FILES } from '../../model/Stage';
 
-export type ApprovalRequest = (tool: string, detail: string) => Promise<boolean>;
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['devices', 'shell', 'start', 'screenshot'];
 
-let gate: ApprovalRequest = () => Promise.resolve(false);
-
-/** Installs the approval gate. Until this is called, confirming tools refuse to run. */
-export function setApprovalGate(request: ApprovalRequest): void {
-  gate = request;
-}
-
-function guarded(tool: string, detail: string): Promise<boolean> {
-  return gate(tool, detail);
-}
 
 function lastLines(text: string, lines: number): string {
   const all: string[] = text.split('\n');
@@ -53,13 +45,8 @@ export function registerDeviceTools(registry: ToolRegistry, ctx: FileContext): v
     approval: 'confirm',
     handler: (args: Record<string, Object>): Promise<string> => {
       const command = args['command'] as string;
-      return guarded('shell', command).then((allowed: boolean) => {
-        if (!allowed) {
-          return 'shell is awaiting approval (gate not wired yet)';
-        }
-        return runHvolt(['shell', command], ctx.projectDir()).then((run: ToolRun) => {
-          return lastLines(run.output, 60);
-        });
+      return runHvolt(['shell', command], ctx.projectDir()).then((run: ToolRun) => {
+        return lastLines(run.output, 60);
       });
     }
   });
@@ -77,13 +64,8 @@ export function registerDeviceTools(registry: ToolRegistry, ctx: FileContext): v
     approval: 'confirm',
     handler: (args: Record<string, Object>): Promise<string> => {
       const target = args['target'] as string;
-      return guarded('start', target).then((allowed: boolean) => {
-        if (!allowed) {
-          return 'start is awaiting approval (gate not wired yet)';
-        }
-        return runHvolt(['start', target], ctx.projectDir()).then((run: ToolRun) => {
-          return lastLines(run.output, 10);
-        });
+      return runHvolt(['start', target], ctx.projectDir()).then((run: ToolRun) => {
+        return lastLines(run.output, 10);
       });
     }
   });
@@ -94,16 +76,11 @@ export function registerDeviceTools(registry: ToolRegistry, ctx: FileContext): v
     inputSchema: { 'type': 'object', 'properties': {}, 'required': [] },
     approval: 'confirm',
     handler: (args: Record<string, Object>): Promise<string> => {
-      return guarded('screenshot', 'capture screen').then((allowed: boolean) => {
-        if (!allowed) {
-          return 'screenshot is awaiting approval (gate not wired yet)';
-        }
-        // 截图落在应用沙箱，不落项目的 build/：那是构建产物目录，随手拍的图混进去
-        // 会跟着打包和清理一起走。沙箱里的固定名也让下一轮能重复覆盖，不留一堆。
-        const path = FILES + '/screenshot.jpeg';
-        return runHvolt(['screenshot', '-o', path], ctx.projectDir()).then((run: ToolRun) => {
-          return 'screenshot code=' + run.code + ' -> ' + path + '\n' + lastLines(run.output, 5);
-        });
+      // 截图落在应用沙箱，不落项目的 build/：那是构建产物目录，随手拍的图混进去
+      // 会跟着打包和清理一起走。沙箱里的固定名也让下一轮能重复覆盖，不留一堆。
+      const path = FILES + '/screenshot.jpeg';
+      return runHvolt(['screenshot', '-o', path], ctx.projectDir()).then((run: ToolRun) => {
+        return 'screenshot code=' + run.code + ' -> ' + path + '\n' + lastLines(run.output, 5);
       });
     }
   });

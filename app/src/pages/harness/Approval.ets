@@ -6,7 +6,6 @@
 
 import hilog from '@ohos.hilog';
 import promptAction from '@ohos.promptAction';
-import { setApprovalGate } from './tools/Device';
 
 export type ApprovalAnswer = 'once' | 'session' | 'deny';
 
@@ -54,7 +53,7 @@ export class ApprovalGate {
     ];
     const options: promptAction.ShowDialogOptions = {
       title: '需要确认：' + tool,
-      message: detail.length > 240 ? detail.substring(0, 240) + '…' : detail,
+      message: formatDetail(detail),
       buttons: buttons
     };
     return promptAction.showDialog(options).then((result: promptAction.ShowDialogSuccessResponse) => {
@@ -72,11 +71,53 @@ export class ApprovalGate {
   }
 }
 
+/**
+ * 把工具参数摊成给人读的几行。
+ *
+ * 参数是 JSON 文本；原样塞进对话框时，模型写的那段说明（`why`）会跟括号引号搅在一起，
+ * 读者要在转义符里找「这次调用会造成什么」。所以：模型的说明放最前面空一行，其余键每行一个，
+ * 值过长截断。解析失败才退回原文——退路只在参数本身不是 JSON 时用到。
+ */
+function formatDetail(detail: string): string {
+  let parsed: Record<string, Object>;
+  try {
+    parsed = JSON.parse(detail) as Record<string, Object>;
+  } catch (e) {
+    return detail.length > 240 ? detail.substring(0, 240) + '…' : detail;
+  }
+  if (parsed === null || typeof parsed !== 'object') {
+    return detail.length > 240 ? detail.substring(0, 240) + '…' : detail;
+  }
+  const lines: string[] = [];
+  const why = parsed['why'];
+  if (typeof why === 'string' && (why as string).length > 0) {
+    lines.push(why as string);
+    lines.push('');
+  }
+  for (const key of Object.keys(parsed)) {
+    if (key === 'why') {
+      continue;
+    }
+    const value = parsed[key];
+    let text = '';
+    if (typeof value === 'string') {
+      text = value as string;
+    } else {
+      text = JSON.stringify(value);
+    }
+    const oneLine = text.length > 160 ? text.substring(0, 160) + '…' : text;
+    lines.push(key + '：' + oneLine);
+  }
+  const joined = lines.join('\n');
+  return joined.length > 600 ? joined.substring(0, 600) + '…' : joined;
+}
+
 export const APPROVAL: ApprovalGate = new ApprovalGate();
 
-/** Wires the gate into the device tools. Call once before starting the endpoint. */
+/**
+ * The dispatcher reads `APPROVAL` directly, so there is nothing left to wire. Kept as a no-op
+ * because `startHarness()` calls it at startup and the call site documents that approval is
+ * installed before any tool can run.
+ */
 export function installApprovalGate(): void {
-  setApprovalGate((tool: string, detail: string) => {
-    return APPROVAL.request(tool, detail);
-  });
 }

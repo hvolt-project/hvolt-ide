@@ -2,7 +2,8 @@ import { TURN_VISIBLE } from '../model/Motion';
 import { Session } from '../model/Session';
 import { AskQuestion } from '../model/Ask';
 import { ChatLine, ChatPanel } from './ChatPanel';
-import { makeLine } from './ChatBlocks';
+import { makeLine } from '../model/Lines';
+import { clearTodos } from '../harness/tools/Todo';
 
 // harness 面：chat 面板加上它这一侧的翻转姿态。数据来自 Session，动作转成回调交给页面，
 // 只有对话内容与忙碌标记用 @Link 双向绑回页面状态。
@@ -15,6 +16,9 @@ export struct HarnessFace {
   @Prop statTokens: number = 0;
   @Prop statCache: number = -1;
   @Prop statPressure: number = 0;
+  /** 工作步骤展示档位，透传给 chat 面。 */
+  @Prop viewMode: string = 'compact';
+  @Prop collapseTiming: string = 'immediate';
   @Prop statContext: number = 0;
   @Prop statRate: number = 0;
   @Prop model: string = '';
@@ -49,6 +53,8 @@ export struct HarnessFace {
       statTokens: this.statTokens,
       statCache: this.statCache,
       statPressure: this.statPressure,
+      viewMode: this.viewMode,
+      collapseTiming: this.collapseTiming,
       statContext: this.statContext,
       statRate: this.statRate,
       project: this.session.project,
@@ -70,6 +76,9 @@ export struct HarnessFace {
         },
         reset: () => {
           this.session.chatReset();
+          // 计划属于这一段对话：对话清了它还挂着，顶上就是一份不存在的进度。
+          // 放在清 lines 之前，让随后的 onLinesChanged 读到的是空表。
+          clearTodos();
           this.lines = [];
         },
         answerAsk: (selected: string[], custom: string) => {
@@ -86,13 +95,23 @@ export struct HarnessFace {
           });
         },
         compact: async () => {
-          const outcome = await this.session.chatCompact();
+          const attempt = await this.session.chatCompact();
           // 压缩只改模型看到的历史，对话本身照原样留着；结果作为一行工具记录追加。
-          const note = makeLine('tool', outcome === null
-            ? '无需压缩'
-            : '已压缩 seq ' + outcome.from + '-' + outcome.to + '（约 ' + outcome.tokens +
-              ' tokens）', 'compact');
-          this.append(note);
+          // 四种没压成的原因分别说明，一律写「无需压缩」会把失败说成没事可做。
+          let text: string = '无需压缩';
+          if (attempt.outcome !== null) {
+            text = '已压缩 seq ' + attempt.outcome.from + '-' + attempt.outcome.to + '（约 ' +
+              attempt.outcome.tokens + ' tokens）';
+          } else if (attempt.stop === 'busy') {
+            text = '现在有回合在跑，压缩要等它结束';
+          } else if (attempt.stop === 'no-region') {
+            text = '没有可安全压缩的区间（历史太短，或切点会拆开工具调用）';
+          } else if (attempt.stop === 'empty-summary') {
+            text = '摘要为空，历史未改动';
+          } else if (attempt.stop === 'not-smaller') {
+            text = '压缩后没有变小，历史未改动';
+          }
+          this.append(makeLine('tool', text, 'compact'));
         },
         close: () => {
           this.onClose();

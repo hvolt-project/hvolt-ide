@@ -8,6 +8,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 import { ToolRun, runHvolt } from './Build';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['read_log'];
+
+
 const DEFAULT_LINES: number = 50;
 const MAX_LINES: number = 200;
 

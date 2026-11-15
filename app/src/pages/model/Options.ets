@@ -15,6 +15,10 @@ export const KEY_OBFUSCATE: string = 'opt.obfuscate';
 export const KEY_AUTOCONNECT: string = 'opt.autoConnect';
 export const KEY_TAIL: string = 'opt.logTail';
 export const KEY_SAVE_ON_SWITCH: string = 'opt.saveOnSwitch';
+/** 对话面的「工作步骤展示」档位，取值见 model/Policy.ts。 */
+export const KEY_TRANSCRIPT_VIEW: string = 'opt.transcriptView';
+/** 折叠时机：立即折，还是等下一条输入（与档位正交）。 */
+export const KEY_COLLAPSE_TIMING: string = 'opt.collapseTiming';
 
 export const FONT_SIZES: number[] = [12, 14, 16, 18, 20];
 export const TAB_SIZES: number[] = [2, 4];
@@ -30,6 +34,9 @@ export class ShellOptions {
   obfuscate: boolean = false;
   autoConnect: boolean = true;
   logTail: number = 120;
+  /** 对话面的档位与折叠时机：同样要落盘持久化，否则每次启动都退回默认。 */
+  transcriptView: string = 'compact';
+  collapseTiming: string = 'immediate';
 }
 
 function flag(value: string): boolean {
@@ -49,6 +56,8 @@ export async function loadOptions(): Promise<ShellOptions> {
   o.autoConnect = flag(await readPref(KEY_AUTOCONNECT, '1'));
   o.logTail = Number(await readPref(KEY_TAIL, '120'));
   o.saveOnSwitch = flag(await readPref(KEY_SAVE_ON_SWITCH, '1'));
+  o.transcriptView = await readPref(KEY_TRANSCRIPT_VIEW, o.transcriptView);
+  o.collapseTiming = await readPref(KEY_COLLAPSE_TIMING, o.collapseTiming);
   publishOptions(o);
   return o;
 }
@@ -63,6 +72,9 @@ export function publishOptions(o: ShellOptions): void {
   AppStorage.setOrCreate(KEY_AUTOCONNECT, o.autoConnect ? '1' : '0');
   AppStorage.setOrCreate(KEY_TAIL, o.logTail);
   AppStorage.setOrCreate(KEY_SAVE_ON_SWITCH, o.saveOnSwitch ? '1' : '0');
+  // 档位/折叠时机：不发布的话界面上的选择只活到这次进程，重启就回默认。
+  AppStorage.setOrCreate(KEY_TRANSCRIPT_VIEW, o.transcriptView);
+  AppStorage.setOrCreate(KEY_COLLAPSE_TIMING, o.collapseTiming);
 }
 
 export function saveOption(key: string, value: string): void {

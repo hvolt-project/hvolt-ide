@@ -16,6 +16,8 @@ node --test test/
 | `format.test.ts` | `app/src/pages/model/Format.ts` — failure line selection, turn summary, rolling log |
 | `commands.test.ts` | `app/src/pages/model/Commands.ts` — argv shapes and the hvolt.toml bundle field |
 | `complete.test.ts` | `app/src/pages/model/Complete.ts` — `/` and `@` completion rules |
+| `lines.test.ts` | `app/src/pages/model/Lines.ts` — collapsed title per kind, expanded body, identity key, foldable predicate |
+| `items.test.ts` | `app/src/pages/model/Items.ts` — line array to visible items: grouping, manual open, fold timing, header wording, error visibility |
 | `urls.test.ts` | `app/src/pages/harness/loop/Urls.ts` — route derivation and provider label |
 
 Two constraints shape these files:

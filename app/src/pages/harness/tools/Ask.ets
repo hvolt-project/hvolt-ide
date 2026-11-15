@@ -13,6 +13,10 @@ import { ToolRegistry } from '../mcp/Registry';
 import { FileContext } from './Files';
 import { AskOption, AskQuestion } from '../../model/Ask';
 
+/** 暴露给 MCP 的工具名；自动注册表按这个导出决定是否收录本文件。 */
+export const MCP_EXPOSE: string[] = ['ask_user_question'];
+
+
 export function registerAskTool(registry: ToolRegistry, ctx: FileContext): void {
   registry.register({
     name: 'ask_user_question',

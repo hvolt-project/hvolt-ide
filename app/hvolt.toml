@@ -1,7 +1,7 @@
 [app]
 bundle = "xyz.sudofree.hvolt.ide"
 name = "hvolt IDE"
-version = "1.2.5"
+version = "1.4.5"
 vendor = "sudofree"
 icon = "$media:layered_image"
 sdk_version = "26.0.0"
@@ -25,3 +25,17 @@ sign_alg = "SHA256withECDSA"
 
 
 [registries]
+
+# 生成工具注册表：扫 tools/*.ets，按各文件的 MCP_EXPOSE 拼注册调用。
+# phase = "pre"：ArkTS 编译读源码树，post 阶段写出的 .ets 不参与本次编译。
+[[app.build.steps]]
+kind = "run"
+path = "scripts/gen-registry.rhai"
+phase = "pre"
+
+# 把 IDE 自己的源码打进 rawfile/self/source.zip。post：归档要覆盖 out_dir 里资源编译
+# 已经拷过去的那份，写早了会被 res 编译重建时抹掉。
+[[app.build.steps]]
+kind = "run"
+path = "scripts/pack-self.rhai"
+phase = "post"

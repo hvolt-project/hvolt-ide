@@ -6,12 +6,20 @@
 
 export type ApprovalLevel = 'none' | 'confirm';
 
+/**
+ * A tool either states its approval once, or decides per call from the arguments. The dispatcher
+ * resolves it before the handler runs, so a tool cannot skip the gate by not calling it itself.
+ * This is structurally the same type `loop/Dispatch.ts` declares; the two files stay independent so
+ * the dispatcher keeps compiling without ArkTS imports.
+ */
+export type ApprovalRule = ApprovalLevel | ((args: Record<string, Object>) => ApprovalLevel);
+
 export interface ToolSpec {
   name: string;
   description: string;
   /** JSON Schema for the arguments object; passed through to MCP clients verbatim. */
   inputSchema: Record<string, Object>;
-  approval: ApprovalLevel;
+  approval: ApprovalRule;
   /** Runs on the UI thread: handlers must not block (device calls go through the worker). */
   handler: (args: Record<string, Object>) => Promise<string>;
 }

@@ -1,3 +1,4 @@
+import { parseSessionEvents } from './Parse.ts';
 // 一段会话：一条 append-only 的事件日志，加上从它派生出来的投影。
 //
 // 结构照 @deepseek-ai/dsh-session：
@@ -51,6 +52,7 @@ export class Session {
   private surfaceState: SurfaceState = emptySurface();
   private header: Object | undefined = undefined;
   private events: SessionEvent[] = [];
+  /** 端点报告的窗口，单位 token。0 表示未知：此时不显示占用百分比，也不做自动压缩。 */
   contextWindow: number = 0;
   reservedCompletionTokens: number = 8192;
   // 当前轮与步，由 turn/start、step/start 事件带入，工具事件照抄。
@@ -106,28 +108,20 @@ export class Session {
   * 跳过一行会让内存事件数少于文件行数，新事件占用旧序号，下次保存把历史再写一遍。
   * @returns 是否完整载入。
   */
+  /** 上次 load 因为坏行丢掉的末尾行数（0 表示完整读入）。 */
+  truncated: number = 0;
+
   load(text: string): boolean {
-    const restored: SessionEvent[] = [];
-    const rows = text.split('\n');
-    for (let index = 0; index < rows.length; index++) {
-      const trimmed = rows[index].trim();
-      if (trimmed.length === 0) {
-        continue;
-      }
-      let event: SessionEvent;
-      try {
-        event = JSON.parse(trimmed) as SessionEvent;
-      } catch (error) {
-        return false;
-      }
-      if (typeof event.seq !== 'number' || typeof event.type !== 'string' ||
-        event.seq !== restored.length) {
-        return false;
-      }
-      restored.push(event);
+    // 坏行只丢尾巴：崩溃时最后一行常是半截，早先那版据此把整份判失败、文件改名 .bad-*、
+    // 用空会话重开，用户看到的就是「历史会话加载失效」。
+    const parsed = parseSessionEvents<SessionEvent>(text);
+    if (parsed.empty) {
+      return false;
     }
-    this.events = restored;
-    this.log.seed(restored);
+    // 丢了几行只记在字段里：这个类是纯逻辑，日志由持有它的那一层去写。
+    this.truncated = parsed.dropped;
+    this.events = parsed.events;
+    this.log.seed(parsed.events);
     this.rebuild();
     return true;
   }
@@ -264,6 +258,9 @@ export class Session {
   /**
    * 展示用的对话：只取 append 进 surface 的事件（替换副本只给模型看，不回到人的视野），
    * 系统提示不进对话；运行时注入保留，由显示层标成可折叠的一行。
+   *
+   * 每条消息的 `id` 被写成它的事件位置：磁盘上的消息对象里这个字段是 0，而显示层要用它把压缩
+   * 标记放回被压缩区间之后——按 0 比，标记永远排在末尾，看起来像刚刚发生的事。
    */
   transcript(base: number): ChatMessage[] {
     const out: ChatMessage[] = [];
@@ -275,6 +272,7 @@ export class Session {
       if (message === undefined || message.role === 'system') {
         continue;
       }
+      message.id = event.seq;
       out.push(message);
     }
     return out;

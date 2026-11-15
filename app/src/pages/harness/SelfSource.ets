@@ -26,9 +26,9 @@ const ROOT: string = 'stage/' + SELF_PROJECT;
  * Bumped whenever the shipped archive changes. Without it a rebuilt archive would keep the previous
  * unpacked tree on every device that had already launched once.
  */
-const STAMP: string = '2026-11-11-3';
+const STAMP: string = '2026-11-15-3';
 /** Marker written after a successful unpack. Bump it when the shipped archive changes shape. */
-const VERSION: string = '2026-11-11-1';
+const VERSION: string = '2026-11-15-3';
 
 export class SelfSource {
   private filesDir: string;

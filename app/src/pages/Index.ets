@@ -10,6 +10,9 @@ import { GAP, palette, Palette } from './model/Palette';
 import { DURATION, spring, TURN, TURN_VISIBLE, TURN_OVERSHOOT, TURN_SHOOT_MS, TURN_SETTLE_MS, TURN_FINGERS_MIN } from './model/Motion';
 import { Bp } from './model/Bridge';
 import { Session } from './model/Session';
+// The ide tool drives this page's editor and face. A tool cannot hold a component reference,
+// so the page hands its session over here, once it exists.
+import { bindIde } from './model/IdeBus';
 import { publishSession } from './model/Storage';
 import { directedTarget, dragAngle, flipsArmable, releaseTarget } from './model/Flip';
 import { appendLine, readStats, rebuildLines } from './model/ChatView';
@@ -34,6 +37,9 @@ struct Index {
   @State leftOpen: boolean = false;
   @State rightOpen: boolean = false;
   @State panelOpen: boolean = false;
+  /** 工作步骤展示档位：@StorageLink 与设置面板写的键同源，切档后对话面立刻重渲染。 */
+  @StorageLink('opt.transcriptView') transcriptView: string = 'compact';
+  @StorageLink('opt.collapseTiming') collapseTiming: string = 'immediate';
   // The two faces of the app: the IDE (blank page and editor) and the harness (chat).
   @State chatOpen: boolean = false;
   // 两面翻转：0 = IDE 面，±180 = harness 面。跟手 1:1，屏宽映射 180°；符号由滑向定。
@@ -132,6 +138,9 @@ struct Index {
     // Shrinking the page instead of lifting it: with OFFSET the whole surface (header included)
     // slides up when the keyboard opens, which is what made the title look wrong.
     this.getUIContext().setKeyboardAvoidMode(KeyboardAvoidMode.RESIZE);
+    bindIde(this.session, (harness: boolean): void => {
+      this.flipTo(harness);
+    });
     // 回来时停在上次那一面：装包重启后不用每次都手动翻回去。
     readPref('face.harness', '0').then((v: string) => {
       if (v === '1') {
@@ -185,6 +194,11 @@ struct Index {
     loadLlmConfig().then((config: LlmConfig) => {
       this.modelLabel = config.model;
       this.providerLabel = providerOf(config.baseUrl);
+      // 窗口不等到第一条消息再问：占用百分比没有分母时整块不渲染，看起来就是「环没了」。
+      this.session.chat.warmContextWindow(config).then(() => {
+        this.syncStats();
+      }).catch(() => {
+      });
     }).catch(() => {
     });
     setChatHandler((dir: number) => {
@@ -389,8 +403,8 @@ struct Index {
     this.statContext = s.contextTokens;
     this.statRate = s.rate;
     hilog.info(0x0000, 'hvoltide',
-      'stats: turns=%{public}d steps=%{public}d tokens=%{public}d cache=%{public}d rate=%{public}d ctx=%{public}d',
-      s.turns, s.steps, s.totalTokens, s.cacheHit, s.rate, s.contextTokens);
+      'stats: turns=%{public}d steps=%{public}d tokens=%{public}d cache=%{public}d rate=%{public}d ctx=%{public}d pressure=%{public}d',
+      s.turns, s.steps, s.totalTokens, s.cacheHit, s.rate, s.contextTokens, s.pressure);
   }
 
   /** Rebuilds the transcript from session history: a restore, or a project switch. */
@@ -399,15 +413,74 @@ struct Index {
     this.syncStats();
   }
 
+  // 流式增量按帧合并：一次回合里每个 delta 都改一次 @State 就等于每块重建整张列表，
+  // 长会话上表现为滑动掉帧。这里把 text/thought 攒到下一帧一次写入，其余种类立即刷。
+  private pendingText: string = '';
+  private pendingThought: string = '';
+  private flushScheduled: boolean = false;
+  /** 探针：本回合收到的增量块数与实际写入次数，done 时打一行。 */
+  private deltaCount: number = 0;
+  private flushCount: number = 0;
+
+  private scheduleFlush(): void {
+    if (this.flushScheduled) {
+      return;
+    }
+    this.flushScheduled = true;
+    setTimeout(() => {
+      this.flushScheduled = false;
+      this.flushStream();
+    }, 16);
+  }
+
+  private flushStream(): void {
+    if (this.pendingText.length > 0) {
+      const chunk: string = this.pendingText;
+      this.pendingText = '';
+      this.flushCount += 1;
+      this.appendChat('text', chunk);
+    }
+    if (this.pendingThought.length > 0) {
+      const chunk: string = this.pendingThought;
+      this.pendingThought = '';
+      this.flushCount += 1;
+      this.appendChat('thought', chunk);
+    }
+  }
+
   private sendChat(text: string, images: string[]): void {
+    // 打断并插话：回合还在跑就先停掉它，这句话作为新输入接着发。
+    // 不先停的话，新请求会和旧回合抢同一条流，两条输出会串在一起。
+    if (this.chatBusy) {
+      this.session.chatStop();
+      this.flushStream();
+    }
     this.appendChat('user', text);
     this.chatBusy = true;
     this.session.chatSend(text, images, (kind: string, body: string) => {
+      if (kind === 'text') {
+        this.deltaCount += 1;
+        this.pendingText += body;
+        this.scheduleFlush();
+        return;
+      }
+      if (kind === 'thought') {
+        this.deltaCount += 1;
+        this.pendingThought += body;
+        this.scheduleFlush();
+        return;
+      }
+      this.flushStream();
       this.appendChat(kind, body);
       if (kind === 'done') {
+        hilog.info(0x0000, 'hvoltide', 'stream merged: deltas=%{public}d writes=%{public}d',
+          this.deltaCount, this.flushCount);
+        this.deltaCount = 0;
+        this.flushCount = 0;
         this.chatBusy = false;
       }
     }).then(() => {
+      this.flushStream();
       this.chatBusy = false;
     }).catch((e: Error) => {
       this.chatBusy = false;
@@ -628,6 +701,8 @@ struct Index {
           statTokens: this.statTokens,
           statCache: this.statCache,
           statPressure: this.statPressure,
+          viewMode: this.transcriptView,
+          collapseTiming: this.collapseTiming,
           statContext: this.statContext,
           statRate: this.statRate,
           model: this.modelLabel,

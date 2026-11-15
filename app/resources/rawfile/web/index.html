@@ -81,6 +81,59 @@
       return dirty;
     };
 
+    // Presentation only: these move the cursor, the selection and the scroll offset, and read
+    // them back. None of them changes the text or the file, so the shell can call them without
+    // a confirmation gate. Opening a file is not here on purpose — that goes through the same
+    // path a tap on the file list takes, so the tab and the unsaved-buffer rules stay in one
+    // place.
+
+    window.hvoltCursor = function (line, column) {
+      if (!editor) { return false; }
+      var position = { lineNumber: Math.max(1, line | 0), column: Math.max(1, column | 0) };
+      editor.setPosition(position);
+      editor.revealPositionInCenterIfOutsideViewport(position);
+      return true;
+    };
+
+    window.hvoltSelect = function (fromLine, fromColumn, toLine, toColumn) {
+      if (!editor) { return false; }
+      var range = new monaco.Range(Math.max(1, fromLine | 0), Math.max(1, fromColumn | 0),
+        Math.max(1, toLine | 0), Math.max(1, toColumn | 0));
+      editor.setSelection(range);
+      editor.revealRangeInCenterIfOutsideViewport(range);
+      return true;
+    };
+
+    window.hvoltScroll = function (line) {
+      if (!editor) { return false; }
+      editor.revealLineInCenter(Math.max(1, line | 0));
+      return true;
+    };
+
+    // Position, selection, size and the dirty flag in one answer: deciding what to do next
+    // needs all four, and separate round trips let the editor move in between.
+    window.hvoltState = function () {
+      if (!editor) { return JSON.stringify({ ready: false }); }
+      var position = editor.getPosition() || { lineNumber: 0, column: 0 };
+      var selection = editor.getSelection();
+      var model = editor.getModel();
+      return JSON.stringify({
+        ready: true,
+        line: position.lineNumber,
+        column: position.column,
+        selection: selection === null ? null : {
+          fromLine: selection.startLineNumber,
+          fromColumn: selection.startColumn,
+          toLine: selection.endLineNumber,
+          toColumn: selection.endColumn
+        },
+        lines: model === null ? 0 : model.getLineCount(),
+        language: model === null ? '' : model.getLanguageId(),
+        dirty: dirty,
+        file: window.hvoltRel || ''
+      });
+    };
+
     require.config({ paths: { vs: './vs' } });
     require(['vs/editor/editor.main'], function () {
       monaco.languages.register({ id: 'arkts', extensions: ['.ets', '.ts'] });
