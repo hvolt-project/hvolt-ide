@@ -50,11 +50,47 @@ function exists(path: string): boolean {
 }
 
 function rmTree(path: string): void {
+  let isDir = false;
+  try {
+    isDir = fs.statSync(path).isDirectory();
+  } catch (e) {
+    // Already gone: nothing left to remove.
+    return;
+  }
+  if (!isDir) {
+    try {
+      fs.unlinkSync(path);
+    } catch (e) {
+      // Same reasoning as above.
+    }
+    return;
+  }
+  let entries: string[] = [];
+  try {
+    entries = fs.listFileSync(path);
+  } catch (e) {
+    return;
+  }
+  for (const name of entries) {
+    rmTree(path + '/' + name);
+  }
   try {
     fs.rmdirSync(path);
   } catch (e) {
-    // Already gone, or not a directory: either way there is nothing left to remove.
+    // A file holds the directory open; the caller reports the swap that follows.
   }
+}
+
+/** `JSON.stringify` of a BusinessError is `{}` — its fields are not enumerable — so a failed
+ *  rename would read as "替换失败：{}" with the reason lost. Prefer the reported code and message. */
+function errText(e: Object): string {
+  const be = e as Record<string, Object>;
+  const code = be['code'];
+  const message = be['message'];
+  if (message !== undefined && message !== null) {
+    return code === undefined && code === null ? String(message) : String(code) + ' ' + String(message);
+  }
+  return JSON.stringify(e);
 }
 
 /** Moves `from` onto `to`, replacing it. `renameSync` is used rather than a copy so a 20-40 MB SDK
@@ -155,7 +191,7 @@ export async function importSdk(): Promise<SdkImportResult> {
   try {
     copyFile(urls[0], staging);
   } catch (e) {
-    return { ok: false, message: '复制失败：' + JSON.stringify(e), version: '' };
+    return { ok: false, message: '复制失败：' + errText(e), version: '' };
   }
 
   freshDir(STAGE_DIR);
@@ -163,7 +199,7 @@ export async function importSdk(): Promise<SdkImportResult> {
     await zlib.decompressFile(staging, STAGE_DIR);
   } catch (e) {
     rmTree(STAGE_DIR);
-    return { ok: false, message: '解压失败：' + JSON.stringify(e), version: '' };
+    return { ok: false, message: '解压失败：' + errText(e), version: '' };
   }
 
   const root = unwrapSingleDir(STAGE_DIR);
@@ -193,7 +229,7 @@ export async function importSdk(): Promise<SdkImportResult> {
     }
     copyFile(staging, ARCHIVE_DIR + '/' + label + '.zip');
   } catch (e) {
-    return { ok: false, message: '替换失败：' + JSON.stringify(e), version: version };
+    return { ok: false, message: '替换失败：' + errText(e), version: version };
   } finally {
     try {
       fs.unlinkSync(staging);
