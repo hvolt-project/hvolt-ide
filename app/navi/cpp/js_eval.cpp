@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <map>
+#include <atomic>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -27,14 +29,14 @@ int64_t NowMs()
 
 // 中断回调只拿到 runtime 与 opaque，deadline 放全局；执行串行，单槽够用。
 // 只触发一次：持续返回 1 会让 catch 里的代码立刻被再次中断，异常就传不出来。
-int64_t g_deadlineMs = 0;
+std::atomic<int64_t> g_deadlineMs{0};
 
 int InterruptHandler(JSRuntime *rt, void *opaque)
 {
     (void)rt;
     (void)opaque;
-    if (g_deadlineMs != 0 && NowMs() > g_deadlineMs) {
-        g_deadlineMs = 0;
+    if (g_deadlineMs.load() != 0 && NowMs() > g_deadlineMs.load()) {
+        g_deadlineMs.store(0);
         return 1;
     }
     return 0;
@@ -237,6 +239,9 @@ struct CallSession {
 };
 
 std::map<int, CallSession *> g_sessions;
+// The table is reached from the NAPI entry points as well as from the JS thread, so
+// every lookup and insert takes this lock.
+std::mutex g_sessionsLock;
 int g_nextSessionId = 1;
 CallSession *g_active = nullptr;
 
@@ -322,11 +327,17 @@ std::string DescribeResult(JSContext *ctx, JSValue value, int64_t elapsedMs)
 
 void DisposeSession(int id)
 {
-    auto it = g_sessions.find(id);
-    if (it == g_sessions.end()) {
-        return;
+    CallSession *session = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(g_sessionsLock);
+        auto it = g_sessions.find(id);
+        if (it == g_sessions.end()) {
+            return;
+        }
+        session = it->second;
+        g_sessions.erase(it);
     }
-    CallSession *session = it->second;
+    // Everything below frees JS values, which must not happen under the table lock.
     if (g_active == session) {
         g_active = nullptr;
     }
@@ -339,17 +350,16 @@ void DisposeSession(int id)
     JS_FreeContext(session->ctx);
     JS_FreeRuntime(session->rt);
     delete session;
-    g_sessions.erase(it);
 }
 
 /** 推进会话：跑 job、看 promise 状态，产出对 ArkTS 的应答 JSON。 */
 std::string AdvanceSession(int id, CallSession *session, int64_t startedAt)
 {
     g_active = session;
-    g_deadlineMs = session->deadlineMs;
+    g_deadlineMs.store(session->deadlineMs);
     const bool drained = DrainJobs(session);
     g_active = nullptr;
-    g_deadlineMs = 0;
+    g_deadlineMs.store(0);
     const int64_t elapsed = NowMs() - startedAt;
     if (!drained) {
         DisposeSession(id);
@@ -396,8 +406,11 @@ std::string AdvanceSession(int id, CallSession *session, int64_t startedAt)
 /** 起一个会话并跑到第一次挂起（或结束）。 */
 std::string StartSession(const std::string &source, int timeoutMs, int memLimitMb, int64_t startedAt)
 {
-    if (static_cast<int>(g_sessions.size()) >= MAX_SESSIONS) {
-        return "{\"status\":\"error\",\"message\":\"too many concurrent js_eval sessions\"}";
+    {
+        std::lock_guard<std::mutex> guard(g_sessionsLock);
+        if (static_cast<int>(g_sessions.size()) >= MAX_SESSIONS) {
+            return "{\"status\":\"error\",\"message\":\"too many concurrent js_eval sessions\"}";
+        }
     }
     JSRuntime *rt = JS_NewRuntime();
     if (rt == nullptr) {
@@ -422,7 +435,10 @@ std::string StartSession(const std::string &source, int timeoutMs, int memLimitM
     JS_SetPropertyStr(ctx, global, "__callTool", toolFn);
     JS_FreeValue(ctx, global);
     const int id = g_nextSessionId++;
-    g_sessions[id] = session;
+    {
+        std::lock_guard<std::mutex> guard(g_sessionsLock);
+        g_sessions[id] = session;
+    }
     // 脚本包成 async 函数：内部的 await 才能把执行权交回 job queue。
     // 统一成 promise：同步脚本包一层 Promise.resolve，异步脚本用 async 函数体。
     const std::string wrapped = NeedsAsync(source) ? WrapSourceAsync(source)
@@ -431,10 +447,10 @@ std::string StartSession(const std::string &source, int timeoutMs, int memLimitM
     // g_deadlineMs 只在 AdvanceSession 里设过——那条路径上的死循环会一直占着主线程。
     // g_active 也要设：脚本第一次执行到 tool() 就在这里，缺了它 ToolCallHost 直接判空抛错。
     g_active = session;
-    g_deadlineMs = session->deadlineMs;
+    g_deadlineMs.store(session->deadlineMs);
     JSValue result = JS_Eval(ctx, wrapped.c_str(), wrapped.size(), "<js_eval>", JS_EVAL_TYPE_GLOBAL);
     g_active = nullptr;
-    g_deadlineMs = 0;
+    g_deadlineMs.store(0);
     if (JS_IsException(result)) {
         JSValue exc = JS_GetException(ctx);
         const char *text = JS_ToCString(ctx, exc);
@@ -455,13 +471,17 @@ std::string StartSession(const std::string &source, int timeoutMs, int memLimitM
 /** 把一次工具调用的结果灌回对应的 promise。resultsJson 形如 [{"id":1,"result":"文本"}]。 */
 std::string ResumeSession(int id, const std::string &resultsJson)
 {
-    auto it = g_sessions.find(id);
-    if (it == g_sessions.end()) {
-        return "{\"status\":\"error\",\"message\":\"unknown session\"}";
+    CallSession *session = nullptr;
+    {
+        std::lock_guard<std::mutex> guard(g_sessionsLock);
+        auto it = g_sessions.find(id);
+        if (it == g_sessions.end()) {
+            return "{\"status\":\"error\",\"message\":\"no such session\"}";
+        }
+        session = it->second;
     }
-    CallSession *session = it->second;
     g_active = session;
-    g_deadlineMs = session->deadlineMs;
+    g_deadlineMs.store(session->deadlineMs);
     // 结果文本本身是 JSON；用 JS 侧解析，省得在 C 里再写一个解析器。
     const std::string parse = std::string("(function(){var a=(") + resultsJson +
         ");var o={};for(var i=0;i<a.length;i++){o[a[i].id]=String(a[i].result);}return o;})()";
@@ -470,7 +490,7 @@ std::string ResumeSession(int id, const std::string &resultsJson)
         JSValue exc = JS_GetException(session->ctx);
         JS_FreeValue(session->ctx, exc);
         g_active = nullptr;
-        g_deadlineMs = 0;
+        g_deadlineMs.store(0);
         DisposeSession(id);
         return "{\"status\":\"error\",\"message\":\"bad results payload\"}";
     }
@@ -487,7 +507,7 @@ std::string ResumeSession(int id, const std::string &resultsJson)
     session->resolvers.clear();
     JS_FreeValue(session->ctx, mapValue);
     g_active = nullptr;
-    g_deadlineMs = 0;
+    g_deadlineMs.store(0);
     const int64_t startedAt = NowMs();
     return AdvanceSession(id, session, startedAt);
 }
@@ -657,6 +677,6 @@ napi_value JsEval(napi_env env, napi_callback_info info)
     JS_FreeValue(ctx, result);
     JS_FreeContext(ctx);
     JS_FreeRuntime(rt);
-    g_deadlineMs = 0;
+    g_deadlineMs.store(0);
     return MakeString(env, out);
 }

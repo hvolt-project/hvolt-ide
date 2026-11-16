@@ -17,6 +17,9 @@
 #include <netdb.h>
 #include <arpa/inet.h>
 #include <poll.h>
+#include <fcntl.h>
+#include <cerrno>
+#include <sys/time.h>
 #include <thread>
 #include <atomic>
 #include <libssh2.h>
@@ -77,9 +80,20 @@ struct Connection {
     LIBSSH2_SESSION *session = nullptr;
     std::string host;
     int port = 22;
+    /// Guards this connection's ssh session. The table lock must not be held across IO: a
+    /// slow or dead peer would then block every other handle.
+    std::mutex io;
 };
 
-std::map<int, Connection> g_connections;
+/** A blocking connect has no deadline of its own; this bounds how long an unreachable host
+ *  can hold a tool call before it reports failure. */
+constexpr int kConnectTimeoutMs = 8000;
+/** Session reads and writes are bounded too, so a half-open peer cannot park a call forever. */
+constexpr int kIoTimeoutSeconds = 30;
+/** Idle keepalive interval; libssh2 probes once per interval while the link is quiet. */
+constexpr int kKeepaliveSeconds = 30;
+
+std::map<int, std::shared_ptr<Connection>> g_connections;
 int g_nextHandle = 1;
 std::mutex g_lock;
 
@@ -100,15 +114,45 @@ int dial(const std::string &host, int port, std::string &error)
     }
     int sock = -1;
     for (struct addrinfo *it = found; it != nullptr; it = it->ai_next) {
-        sock = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
-        if (sock < 0) {
+        int candidate = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (candidate < 0) {
             continue;
         }
-        if (connect(sock, it->ai_addr, it->ai_addrlen) == 0) {
-            break;
+        // Connect non-blocking under a poll deadline, then restore the original flags: a plain
+        // connect() against an unreachable host sits in SYN retries and the caller sees a hang.
+        int flags = fcntl(candidate, F_GETFL, 0);
+        if (flags >= 0) {
+            fcntl(candidate, F_SETFL, flags | O_NONBLOCK);
         }
-        close(sock);
-        sock = -1;
+        int rc = connect(candidate, it->ai_addr, it->ai_addrlen);
+        bool connected = (rc == 0);
+        if (!connected && errno == EINPROGRESS) {
+            struct pollfd wait;
+            wait.fd = candidate;
+            wait.events = POLLOUT;
+            wait.revents = 0;
+            if (poll(&wait, 1, kConnectTimeoutMs) > 0) {
+                int soError = 0;
+                socklen_t len = sizeof(soError);
+                if (getsockopt(candidate, SOL_SOCKET, SO_ERROR, &soError, &len) == 0) {
+                    connected = (soError == 0);
+                }
+            }
+        }
+        if (flags >= 0) {
+            fcntl(candidate, F_SETFL, flags);
+        }
+        if (!connected) {
+            close(candidate);
+            continue;
+        }
+        struct timeval io;
+        io.tv_sec = kIoTimeoutSeconds;
+        io.tv_usec = 0;
+        setsockopt(candidate, SOL_SOCKET, SO_RCVTIMEO, &io, sizeof(io));
+        setsockopt(candidate, SOL_SOCKET, SO_SNDTIMEO, &io, sizeof(io));
+        sock = candidate;
+        break;
     }
     freeaddrinfo(found);
     if (sock < 0) {
@@ -178,6 +222,10 @@ std::string SshOpen(const std::string &host, int port, const std::string &user,
         return std::string("{\"error\":\"session init failed\"}");
     }
     libssh2_session_set_blocking(session, 1);
+    // Keep the connection alive across idle periods: a NAT or firewall drops an idle TCP
+    // session silently, and the next exec then fails inside libssh2 with no explanation. The
+    // reply is wanted, so a dead peer is detected here instead of at the next tool call.
+    libssh2_keepalive_config(session, 1, kKeepaliveSeconds);
     if (libssh2_session_handshake(session, sock) != 0) {
         std::string message = LastError(session, "handshake failed");
         libssh2_session_free(session);
@@ -212,14 +260,17 @@ std::string SshOpen(const std::string &host, int port, const std::string &user,
         return std::string("{\"error\":\"") + JsonEscape(message) + "\",\"fingerprint\":\""
             + JsonEscape(fingerprint) + "\"}";
     }
-    std::lock_guard<std::mutex> guard(g_lock);
-    int handle = g_nextHandle++;
-    Connection conn;
-    conn.sock = sock;
-    conn.session = session;
-    conn.host = host;
-    conn.port = port;
-    g_connections[handle] = conn;
+    std::shared_ptr<Connection> conn = std::make_shared<Connection>();
+    conn->sock = sock;
+    conn->session = session;
+    conn->host = host;
+    conn->port = port;
+    int handle = 0;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        handle = g_nextHandle++;
+        g_connections[handle] = conn;
+    }
     return std::string("{\"handle\":") + std::to_string(handle) + ",\"fingerprint\":\""
         + JsonEscape(fingerprint) + "\",\"host\":\"" + JsonEscape(host) + "\"}";
 }
@@ -228,12 +279,17 @@ std::string SshOpen(const std::string &host, int port, const std::string &user,
 // 在已有连接上开一个 channel 执行一条命令，读到 EOF 后关 channel。
 std::string SshExec(int handle, const std::string &command)
 {
-    std::lock_guard<std::mutex> guard(g_lock);
-    auto it = g_connections.find(handle);
-    if (it == g_connections.end()) {
-        return std::string("{\"error\":\"no such handle\"}");
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        auto it = g_connections.find(handle);
+        if (it == g_connections.end()) {
+            return std::string("{\"error\":\"no such handle\"}");
+        }
+        conn = it->second;
     }
-    LIBSSH2_SESSION *session = it->second.session;
+    std::lock_guard<std::mutex> ioLock(conn->io);
+    LIBSSH2_SESSION *session = conn->session;
     LIBSSH2_CHANNEL *channel = libssh2_channel_open_session(session);
     if (channel == nullptr) {
         return std::string("{\"error\":\"") + JsonEscape(LastError(session, "channel open failed")) + "\"}";
@@ -282,19 +338,26 @@ std::string SshExec(int handle, const std::string &command)
 
 std::string SshClose(int handle)
 {
-    std::lock_guard<std::mutex> guard(g_lock);
-    auto it = g_connections.find(handle);
-    if (it == g_connections.end()) {
-        return std::string("{\"error\":\"no such handle\"}");
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        auto it = g_connections.find(handle);
+        if (it == g_connections.end()) {
+            return std::string("{\"error\":\"no such handle\"}");
+        }
+        conn = it->second;
+        // Removed before the teardown below: a concurrent lookup must not see an entry whose
+        // session is being freed.
+        g_connections.erase(it);
     }
-    if (it->second.session != nullptr) {
-        libssh2_session_disconnect(it->second.session, "bye");
-        libssh2_session_free(it->second.session);
+    std::lock_guard<std::mutex> ioLock(conn->io);
+    if (conn->session != nullptr) {
+        libssh2_session_disconnect(conn->session, "bye");
+        libssh2_session_free(conn->session);
     }
-    if (it->second.sock >= 0) {
-        close(it->second.sock);
+    if (conn->sock >= 0) {
+        close(conn->sock);
     }
-    g_connections.erase(it);
     return std::string("{\"closed\":") + std::to_string(handle) + "}";
 }
 
@@ -305,12 +368,17 @@ std::string SshClose(int handle)
 
 std::string SftpRead(int handle, const std::string &path)
 {
-    std::lock_guard<std::mutex> guard(g_lock);
-    auto it = g_connections.find(handle);
-    if (it == g_connections.end()) {
-        return std::string("{\"error\":\"no such handle\"}");
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        auto it = g_connections.find(handle);
+        if (it == g_connections.end()) {
+            return std::string("{\"error\":\"no such handle\"}");
+        }
+        conn = it->second;
     }
-    LIBSSH2_SESSION *session = it->second.session;
+    std::lock_guard<std::mutex> ioLock(conn->io);
+    LIBSSH2_SESSION *session = conn->session;
     LIBSSH2_SFTP *sftp = libssh2_sftp_init(session);
     if (sftp == nullptr) {
         return std::string("{\"error\":\"") + JsonEscape(LastError(session, "sftp init failed")) + "\"}";
@@ -346,12 +414,17 @@ std::string SftpRead(int handle, const std::string &path)
 
 std::string SftpWrite(int handle, const std::string &path, const std::string &text)
 {
-    std::lock_guard<std::mutex> guard(g_lock);
-    auto it = g_connections.find(handle);
-    if (it == g_connections.end()) {
-        return std::string("{\"error\":\"no such handle\"}");
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        auto it = g_connections.find(handle);
+        if (it == g_connections.end()) {
+            return std::string("{\"error\":\"no such handle\"}");
+        }
+        conn = it->second;
     }
-    LIBSSH2_SESSION *session = it->second.session;
+    std::lock_guard<std::mutex> ioLock(conn->io);
+    LIBSSH2_SESSION *session = conn->session;
     LIBSSH2_SFTP *sftp = libssh2_sftp_init(session);
     if (sftp == nullptr) {
         return std::string("{\"error\":\"") + JsonEscape(LastError(session, "sftp init failed")) + "\"}";
@@ -383,12 +456,17 @@ std::string SftpWrite(int handle, const std::string &path, const std::string &te
 
 std::string SftpList(int handle, const std::string &path)
 {
-    std::lock_guard<std::mutex> guard(g_lock);
-    auto it = g_connections.find(handle);
-    if (it == g_connections.end()) {
-        return std::string("{\"error\":\"no such handle\"}");
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        auto it = g_connections.find(handle);
+        if (it == g_connections.end()) {
+            return std::string("{\"error\":\"no such handle\"}");
+        }
+        conn = it->second;
     }
-    LIBSSH2_SESSION *session = it->second.session;
+    std::lock_guard<std::mutex> ioLock(conn->io);
+    LIBSSH2_SESSION *session = conn->session;
     LIBSSH2_SFTP *sftp = libssh2_sftp_init(session);
     if (sftp == nullptr) {
         return std::string("{\"error\":\"") + JsonEscape(LastError(session, "sftp init failed")) + "\"}";
@@ -449,8 +527,34 @@ struct Forward {
 std::map<int, std::shared_ptr<Forward>> g_forwards;
 int g_nextForward = 1;
 
+/** Wait until the session can make progress, in the direction libssh2 reported.
+ *
+ *  An EAGAIN from a channel is about the ssh transport, not about the local fd: waiting on the
+ *  local socket for POLLOUT would spin until the timeout while the transport stays blocked.
+ */
+void WaitForSession(LIBSSH2_SESSION *session, int sessionSock, int timeoutMs)
+{
+    int direction = libssh2_session_block_directions(session);
+    short events = 0;
+    if ((direction & LIBSSH2_SESSION_BLOCK_INBOUND) != 0) {
+        events |= POLLIN;
+    }
+    if ((direction & LIBSSH2_SESSION_BLOCK_OUTBOUND) != 0) {
+        events |= POLLOUT;
+    }
+    if (events == 0) {
+        events = POLLIN | POLLOUT;
+    }
+    struct pollfd wait;
+    wait.fd = sessionSock;
+    wait.events = events;
+    wait.revents = 0;
+    poll(&wait, 1, timeoutMs);
+}
+
 /** 在一条已建立的 session 上，把本地 fd 与远端 channel 对接，直到任一端关闭。 */
-void PumpConnection(LIBSSH2_SESSION *session, int localFd, const std::string &remoteHost, int remotePort)
+void PumpConnection(LIBSSH2_SESSION *session, int sessionSock, int localFd,
+    const std::string &remoteHost, int remotePort)
 {
     LIBSSH2_CHANNEL *channel = libssh2_channel_direct_tcpip(session, remoteHost.c_str(), remotePort);
     if (channel == nullptr) {
@@ -465,10 +569,12 @@ void PumpConnection(LIBSSH2_SESSION *session, int localFd, const std::string &re
         fds[0].fd = localFd;
         fds[0].events = POLLIN;
         fds[0].revents = 0;
-        fds[1].fd = localFd;
-        fds[1].events = POLLOUT;
+        // The second entry is the ssh transport: inbound data has to wake this loop, and the
+        // previous version filled both entries with localFd while polling only one of them.
+        fds[1].fd = sessionSock;
+        fds[1].events = POLLIN;
         fds[1].revents = 0;
-        int ready = poll(fds, 1, 200);
+        int ready = poll(fds, 2, 200);
         if (ready > 0 && (fds[0].revents & POLLIN) != 0) {
             ssize_t got = read(localFd, buffer, sizeof(buffer));
             if (got <= 0) {
@@ -483,10 +589,7 @@ void PumpConnection(LIBSSH2_SESSION *session, int localFd, const std::string &re
                     continue;
                 }
                 if (put == LIBSSH2_ERROR_EAGAIN) {
-                    struct pollfd wait[1];
-                    wait[0].fd = localFd;
-                    wait[0].events = POLLOUT;
-                    poll(wait, 1, 50);
+                    WaitForSession(session, sessionSock, 50);
                     continue;
                 }
                 alive = false;
@@ -525,11 +628,16 @@ void PumpConnection(LIBSSH2_SESSION *session, int localFd, const std::string &re
 /** 起一条转发：返回转发 id，失败返回错误。 */
 std::string ForwardStart(int sessionHandle, int localPort, const std::string &remoteHost, int remotePort)
 {
-    std::lock_guard<std::mutex> guard(g_lock);
-    auto it = g_connections.find(sessionHandle);
-    if (it == g_connections.end()) {
-        return std::string("{\"error\":\"no such handle\"}");
+    std::shared_ptr<Connection> conn;
+    {
+        std::lock_guard<std::mutex> guard(g_lock);
+        auto it = g_connections.find(sessionHandle);
+        if (it == g_connections.end()) {
+            return std::string("{\"error\":\"no such handle\"}");
+        }
+        conn = it->second;
     }
+    std::lock_guard<std::mutex> ioLock(conn->io);
     int listenSock = socket(AF_INET, SOCK_STREAM, 0);
     if (listenSock < 0) {
         return std::string("{\"error\":\"listen socket failed\"}");
@@ -559,9 +667,10 @@ std::string ForwardStart(int sessionHandle, int localPort, const std::string &re
     forward->remoteHost = remoteHost;
     forward->remotePort = remotePort;
     forward->localPort = boundPort;
-    LIBSSH2_SESSION *session = it->second.session;
+    LIBSSH2_SESSION *session = conn->session;
+    const int sessionSock = conn->sock;
     Forward *raw = forward.get();
-    forward->worker = std::thread([raw, session]() {
+    forward->worker = std::thread([raw, session, sessionSock]() {
         while (!raw->stop.load()) {
             struct pollfd wait[1];
             wait[0].fd = raw->listenSock;
@@ -575,7 +684,7 @@ std::string ForwardStart(int sessionHandle, int localPort, const std::string &re
             if (client < 0) {
                 continue;
             }
-            PumpConnection(session, client, raw->remoteHost, raw->remotePort);
+            PumpConnection(session, sessionSock, client, raw->remoteHost, raw->remotePort);
         }
     });
     const int id = forward->handle;
