@@ -46,6 +46,10 @@ for path in files:
         candidates += [os.path.join(base, 'index' + e) for e in EXTS]
         resolved = next((c for c in candidates if os.path.abspath(c) in modules), None)
         if resolved is None:
+            # `*.generated` modules are written by `hvolt build` and are gitignored, so a checkout
+            # that has never been built has them missing; that is not a broken import.
+            if '.generated' in target:
+                continue
             problems.append((path, target, '*', 'module not found'))
             continue
         exported = modules[os.path.abspath(resolved)]

@@ -342,7 +342,8 @@ int Dispatch(ShellState &state, const std::vector<std::string> &argv, std::strin
                                                          : next - at);
                 if (!part.empty()) {
                     built += (built.size() > 1 || built.empty()) ? "" : "";
-                    if (built.back() != '/') {
+                    // `built` is empty for a relative first segment; back() on it is undefined.
+                    if (!built.empty() && built.back() != '/') {
                         built += '/';
                     }
                     built += part;

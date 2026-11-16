@@ -84,7 +84,7 @@ int OpenRepository(const std::string &dir, git_repository **out)
 
 // 四个 op 都可能遍历工作树（status 与 diff 最重），在主线程做会触发三秒冻结。
 // 统一走 napi_async_work：参数在入口线程拷成 C++ 字符串，结果在工作线程算。
-enum class GitOp { STATUS, LOG, DIFF, SHOW, ADD, COMMIT, BRANCH, CHECKOUT };
+enum class GitOp { STATUS, LOG, DIFF, SHOW, ADD, COMMIT, BRANCH, CHECKOUT, FETCH, PUSH, CLONE };
 
 struct GitJob {
     GitOp op = GitOp::STATUS;
@@ -94,6 +94,9 @@ struct GitJob {
     int limit = 20;
     /** add 用：要加入索引的路径；空表示全部。 */
     std::vector<std::string> paths;
+    /** fetch/push/clone 用：HTTPS 凭据，空表示匿名。 */
+    std::string credUser;
+    std::string credPass;
     std::string result;
     napi_deferred deferred = nullptr;
     napi_async_work work = nullptr;
@@ -108,6 +111,11 @@ std::string GitAdd(const std::string &repoDir, const std::vector<std::string> &p
 std::string GitCommit(const std::string &repoDir, const std::string &message);
 std::string GitBranch(const std::string &repoDir, const std::string &name, bool force);
 std::string GitCheckout(const std::string &repoDir, const std::string &ref);
+std::string GitFetch(const std::string &repoDir, const std::string &user, const std::string &password);
+std::string GitPush(const std::string &repoDir, const std::string &refspec,
+    const std::string &user, const std::string &password);
+std::string GitClone(const std::string &url, const std::string &dest,
+    const std::string &user, const std::string &password);
 
 void GitExecute(napi_env env, void *data)
 {
@@ -136,6 +144,15 @@ void GitExecute(napi_env env, void *data)
             break;
         case GitOp::CHECKOUT:
             job->result = GitCheckout(job->repoDir, job->second);
+            break;
+        case GitOp::FETCH:
+            job->result = GitFetch(job->repoDir, job->credUser, job->credPass);
+            break;
+        case GitOp::PUSH:
+            job->result = GitPush(job->repoDir, job->second, job->credUser, job->credPass);
+            break;
+        case GitOp::CLONE:
+            job->result = GitClone(job->second, job->repoDir, job->credUser, job->credPass);
             break;
     }
 }
@@ -510,6 +527,123 @@ std::string GitBranch(const std::string &repoDir, const std::string &name, bool 
     return std::string("{\"branch\":\"") + JsonEscape(name) + "\"}";
 }
 
+namespace {
+
+struct CredPayload {
+    std::string user;
+    std::string password;
+};
+
+int CredentialsCb(git_credential **out, const char *url, const char *usernameFromUrl,
+    unsigned int allowed, void *payload)
+{
+    (void)url;
+    (void)usernameFromUrl;
+    const CredPayload *p = static_cast<const CredPayload *>(payload);
+    if (p != nullptr && !p->user.empty()
+        && (allowed & GIT_CREDENTIAL_USERPASS_PLAINTEXT) != 0) {
+        return git_credential_userpass_plaintext_new(out, p->user.c_str(), p->password.c_str());
+    }
+    if ((allowed & GIT_CREDENTIAL_DEFAULT) != 0) {
+        return git_credential_default_new(out);
+    }
+    return GIT_EUSER;
+}
+
+std::string RemoteError(const char *fallback)
+{
+    const git_error *err = git_error_last();
+    return std::string("{\"error\":\"") + JsonEscape(err == nullptr ? fallback : err->message)
+        + "\"}";
+}
+
+}  // namespace
+
+/** Fetch every ref of `origin`. */
+std::string GitFetch(const std::string &repoDir, const std::string &user,
+    const std::string &password)
+{
+    git_repository *repo = nullptr;
+    if (git_repository_open(&repo, repoDir.c_str()) != 0) {
+        return RemoteError("open failed");
+    }
+    git_remote *remote = nullptr;
+    if (git_remote_lookup(&remote, repo, "origin") != 0) {
+        git_repository_free(repo);
+        return RemoteError("no origin remote");
+    }
+    CredPayload cred{user, password};
+    git_fetch_options opts = GIT_FETCH_OPTIONS_INIT;
+    opts.callbacks.credentials = CredentialsCb;
+    opts.callbacks.payload = &cred;
+    const int rc = git_remote_fetch(remote, nullptr, &opts, nullptr);
+    git_remote_free(remote);
+    git_repository_free(repo);
+    if (rc != 0) {
+        return RemoteError("fetch failed");
+    }
+    return "{\"ok\":true}";
+}
+
+/** Push one refspec (default: the current branch to origin under the same name). */
+std::string GitPush(const std::string &repoDir, const std::string &refspec,
+    const std::string &user, const std::string &password)
+{
+    git_repository *repo = nullptr;
+    if (git_repository_open(&repo, repoDir.c_str()) != 0) {
+        return RemoteError("open failed");
+    }
+    git_remote *remote = nullptr;
+    if (git_remote_lookup(&remote, repo, "origin") != 0) {
+        git_repository_free(repo);
+        return RemoteError("no origin remote");
+    }
+    std::string spec = refspec;
+    if (spec.empty()) {
+        git_reference *head = nullptr;
+        if (git_repository_head(&head, repo) != 0) {
+            git_remote_free(remote);
+            git_repository_free(repo);
+            return RemoteError("no current branch");
+        }
+        const char *name = git_reference_name(head);
+        spec = std::string(name) + ":" + name;
+        git_reference_free(head);
+    }
+    char *specItems[1] = {const_cast<char *>(spec.c_str())};
+    git_strarray specs{specItems, 1};
+    CredPayload cred{user, password};
+    git_push_options opts = GIT_PUSH_OPTIONS_INIT;
+    opts.callbacks.credentials = CredentialsCb;
+    opts.callbacks.payload = &cred;
+    const int rc = git_remote_push(remote, &specs, &opts);
+    git_remote_free(remote);
+    git_repository_free(repo);
+    if (rc != 0) {
+        return RemoteError("push failed");
+    }
+    return "{\"ok\":true,\"refspec\":\"" + JsonEscape(spec) + "\"}";
+}
+
+/** Clone `url` into `dest`. */
+std::string GitClone(const std::string &url, const std::string &dest,
+    const std::string &user, const std::string &password)
+{
+    if (url.empty() || dest.empty()) {
+        return std::string("{\"error\":\"clone needs a url and a destination\"}");
+    }
+    CredPayload cred{user, password};
+    git_clone_options opts = GIT_CLONE_OPTIONS_INIT;
+    opts.fetch_opts.callbacks.credentials = CredentialsCb;
+    opts.fetch_opts.callbacks.payload = &cred;
+    git_repository *repo = nullptr;
+    if (git_clone(&repo, url.c_str(), dest.c_str(), &opts) != 0) {
+        return RemoteError("clone failed");
+    }
+    git_repository_free(repo);
+    return "{\"ok\":true,\"path\":\"" + JsonEscape(dest) + "\"}";
+}
+
 std::string GitCheckout(const std::string &repoDir, const std::string &ref)
 {
     if (ref.empty()) {
@@ -580,9 +714,16 @@ napi_value GitCallEntry(napi_env env, napi_callback_info info)
     const std::string repoDir = ArgString(env, args[1]);
     const std::string first = argc >= 3 ? ArgString(env, args[2]) : std::string();
     const std::string second = argc >= 4 ? ArgString(env, args[3]) : std::string();
-
     GitJob *job = new GitJob();
     job->repoDir = repoDir;
+    {
+        // `second` carries "user:password" for the network ops; a colon in the password is kept.
+        const size_t colon = second.find(':');
+        if (colon != std::string::npos) {
+            job->credUser = second.substr(0, colon);
+            job->credPass = second.substr(colon + 1);
+        }
+    }
     const char *name = nullptr;
     if (op == "status") {
         job->op = GitOp::STATUS;
@@ -633,6 +774,19 @@ napi_value GitCallEntry(napi_env env, napi_callback_info info)
         job->op = GitOp::CHECKOUT;
         job->second = first;
         name = "navi:gitCheckout";
+    } else if (op == "fetch") {
+        job->op = GitOp::FETCH;
+        name = "navi:gitFetch";
+    } else if (op == "push") {
+        job->op = GitOp::PUSH;
+        job->second = first;
+        name = "navi:gitPush";
+    } else if (op == "clone") {
+        job->op = GitOp::CLONE;
+        // args: repoDir is the url, `first` the destination directory.
+        job->second = job->repoDir;
+        job->repoDir = first;
+        name = "navi:gitClone";
     } else {
         delete job;
         return MakeString(env, "{\"error\":\"unknown op\"}");

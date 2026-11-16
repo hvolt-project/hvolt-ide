@@ -12,6 +12,7 @@
 #include <cstring>
 #include <ctime>
 #include <unistd.h>
+#include <dirent.h>
 #include <cstdio>
 #include <sys/stat.h>
 #include <git2.h>
@@ -76,7 +77,12 @@ int OpenSnapshots(const std::string &snapshotsDir, const std::string &projectDir
 {
     git_repository *repo = nullptr;
     if (git_repository_open_ext(&repo, snapshotsDir.c_str(), GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) == 0) {
-        git_repository_set_workdir(repo, projectDir.c_str(), 0);
+        // A repository whose workdir could not be repointed would snapshot the wrong tree, so
+        // this used to hand back a repository that silently wrote nothing.
+        if (git_repository_set_workdir(repo, projectDir.c_str(), 0) != 0) {
+            git_repository_free(repo);
+            return -3;
+        }
         *out = repo;
         return 0;
     }
@@ -96,6 +102,41 @@ int OpenSnapshots(const std::string &snapshotsDir, const std::string &projectDir
     }
     *out = repo;
     return 0;
+}
+
+// Remove a path whether it is a file or a directory.
+//
+// The rollback used unlink() alone, which fails on a directory, so an untracked directory an
+// earlier build had created survived the rewind and reappeared in the next snapshot.
+bool RemoveTree(const std::string &path)
+{
+    struct stat st;
+    if (lstat(path.c_str(), &st) != 0) {
+        return false;
+    }
+    if (!S_ISDIR(st.st_mode)) {
+        return unlink(path.c_str()) == 0;
+    }
+    DIR *dir = opendir(path.c_str());
+    if (dir == nullptr) {
+        return false;
+    }
+    bool ok = true;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != nullptr) {
+        const std::string name = entry->d_name;
+        if (name == "." || name == "..") {
+            continue;
+        }
+        if (!RemoveTree(path + "/" + name)) {
+            ok = false;
+        }
+    }
+    closedir(dir);
+    if (!ok) {
+        return false;
+    }
+    return rmdir(path.c_str()) == 0;
 }
 
 // 快照不该走进构建产物：一个 build/ 目录常有几百 MB，把它们逐字节哈希一遍会让
@@ -288,7 +329,7 @@ std::string SnapshotRestore(const std::string &snapshotsDir, const std::string &
                 continue;
             }
             std::string full = projectDir + "/" + path;
-            if (unlink(full.c_str()) == 0) {
+            if (RemoveTree(full)) {
                 deleted++;
             }
         }
@@ -304,7 +345,14 @@ std::string SnapshotRestore(const std::string &snapshotsDir, const std::string &
     // 复位后再刷一次 index，让下一次快照看到的是复位后的状态。
     git_index *index = nullptr;
     if (git_repository_index(&index, repo) == 0) {
-        git_index_read(index, 1);
+        // A stale index would make the next snapshot compare against the pre-reset state; say
+        // so instead of carrying on with it.
+        if (git_index_read(index, 1) != 0) {
+            git_index_free(index);
+            git_object_free(target);
+            git_repository_free(repo);
+            return ErrorJson("index read failed");
+        }
         git_index_free(index);
     }
 
