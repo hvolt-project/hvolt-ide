@@ -21,7 +21,9 @@ jobs:
           node-version: '22'
 
       - name: node --test
-        run: node --test test/
+        # Not `node --test test/`: node 22 treats the argument as a module path and fails with
+        # "Cannot find module .../test". A glob it can expand works on both 22 and newer.
+        run: node --test test/*.test.ts
 
       - name: import graph
         run: python3 test/check-imports.py
