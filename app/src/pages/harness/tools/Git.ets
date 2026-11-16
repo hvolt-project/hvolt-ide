@@ -31,8 +31,20 @@ const WRITE_OPS: ReadOp[] = [
   { name: 'add' },
   { name: 'commit' },
   { name: 'branch' },
-  { name: 'checkout' }
+  { name: 'checkout' },
+  { name: 'fetch' },
+  { name: 'push' },
+  { name: 'clone' }
 ];
+
+/** "user:password" for the native network ops; empty when neither is given. */
+function credentialText(args: Record<string, Object>): string {
+  const user = argText(args, 'user');
+  if (user.length === 0) {
+    return '';
+  }
+  return user + ':' + argText(args, 'password');
+}
 
 function isWriteOp(op: string): boolean {
   for (const entry of WRITE_OPS) {
@@ -108,7 +120,7 @@ export function registerGitTools(registry: ToolRegistry, ctx: FileContext): void
       'properties': {
         'op': {
           'type': 'string',
-          'enum': ['status', 'diff', 'log', 'show', 'add', 'commit', 'branch', 'checkout'],
+          'enum': ['status', 'diff', 'log', 'show', 'add', 'commit', 'branch', 'checkout', 'fetch', 'push', 'clone'],
           'description': 'Which git read operation to run.'
         },
         'args': {
@@ -127,7 +139,11 @@ export function registerGitTools(registry: ToolRegistry, ctx: FileContext): void
             'message': { 'type': 'string', 'description': 'commit: message text.' },
             'name': { 'type': 'string', 'description': 'branch: branch name.' },
             'force': { 'type': 'boolean', 'description': 'branch: overwrite when it exists.' },
-            'ref': { 'type': 'string', 'description': 'checkout: branch or commit to switch to.' }
+            'ref': { 'type': 'string', 'description': 'checkout: branch or commit to switch to.' },
+            'url': { 'type': 'string', 'description': 'clone: remote url to clone from (https only).' },
+            'refspec': { 'type': 'string', 'description': 'push: refspec; empty means the current branch to origin.' },
+            'user': { 'type': 'string', 'description': 'fetch/push/clone: https user, optional.' },
+            'password': { 'type': 'string', 'description': 'fetch/push/clone: https password or token, optional.' }
           },
           'required': []
         }
@@ -181,6 +197,22 @@ export function registerGitTools(registry: ToolRegistry, ctx: FileContext): void
           return Promise.resolve('error: checkout needs args.ref');
         }
         return gitCheckout(root, ref);
+      }
+      // The network ops share one native entry; credentials ride along as "user:password" in the
+      // fourth slot, which the native side splits on the first colon.
+      if (op === 'fetch') {
+        return gitCall('fetch', root, '', credentialText(args));
+      }
+      if (op === 'push') {
+        return gitCall('push', root, argText(args, 'refspec'), credentialText(args));
+      }
+      if (op === 'clone') {
+        const url = argText(args, 'url');
+        const dest = argText(args, 'path');
+        if (url.length === 0 || dest.length === 0) {
+          return Promise.resolve('error: clone needs args.url and args.path');
+        }
+        return gitCall('clone', url, dest, credentialText(args));
       }
       const known: string[] = [];
       for (const entry of READ_OPS) {
